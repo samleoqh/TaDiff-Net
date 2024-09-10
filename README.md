@@ -1,6 +1,8 @@
 # TaDiff-Net
 This repository contains code for the paper "[Treatment-aware Diffusion Probabilistic Model for Longitudinal MRI Generation and Diffuse Glioma Growth Prediction](https://arxiv.org/abs/2309.05406)", which is currently under review. Once the paper is published, we will release the code and data in accordance with company policies.
 
+<img align="top" src="tadiff_concept.png" width="800"/>  <img align="top" src="demo_1.gif" width="151"/> 
+
 ## Overview
 In this paper, we present a novel end-to-end network capable of generating future tumor masks and realistic MRIs of how the tumor will look at any future time points for different treatment plans. Our approach is based on cutting-edge diffusion probabilistic models and deep-segmentation neural networks. We included sequential multi-parametric magnetic resonance images (MRI) and treatment information as conditioning inputs to guide the generative diffusion process. This allows for tumor growth estimates at any given time point. We trained the model using real-world [postoperative longitudinal MRI data](https://search.kg.ebrains.eu/instances/cae85bcb-8526-442d-b0d8-a866425efff8) with glioma tumor growth trajectories represented as tumor segmentation maps over time. The model has demonstrated promising performance across a range of tasks, including the generation of high-quality synthetic MRIs with tumor masks, time-series tumor segmentations, and uncertainty estimates. Combined with the treatment-aware generated MRIs, the tumor growth predictions with uncertainty estimates can provide useful information for clinical decision-making.
 
