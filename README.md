@@ -1,9 +1,9 @@
 # TaDiff-Net
 This repository contains code for the paper "[Treatment-aware Diffusion Probabilistic Model for Longitudinal MRI Generation and Diffuse Glioma Growth Prediction](https://arxiv.org/abs/2309.05406)", which is currently under review. Once the paper is published, we will release the code and data in accordance with company policies.
 
-<div style="display: flex; align-items: center;">
-    <img src="tadiff_concept.png" alt="Concept Image" style="height: 200px;">
-    <img src="demo_1.gif" alt="Demo GIF" style="height: 200px;">
+<div style="display: flex; align-items: unsafe center;">
+    <img src="demo_1.gif" alt="Demo GIF" style="height: 260px;">
+    <img src="tadiff_concept.png" alt="Concept Image" style="width: 650px;">
 </div>
 
 ## Overview
