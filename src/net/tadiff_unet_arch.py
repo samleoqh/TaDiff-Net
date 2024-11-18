@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-from net.utils import (
+from src.net.utils import (
     checkpoint,
     conv_nd,
     linear,

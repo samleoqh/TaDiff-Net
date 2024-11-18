@@ -1,14 +1,14 @@
 import numpy as np
 import torch
-from net.tadiff_unet_arch import TaDiff_Net
+from src.net.tadiff_unet_arch import TaDiff_Net
 import wandb # logging metrics
 
 from pytorch_lightning import LightningModule, Callback
 from torch.optim import AdamW, SGD
-from net.ssim import SSIM
+from src.net.ssim import SSIM
 
 from monai.optimizers.lr_scheduler import WarmupCosineSchedule
-from net.diffusion import GaussianDiffusion
+from src.net.diffusion import GaussianDiffusion
 import torch.nn.functional as F
 
 
