@@ -2,7 +2,7 @@ from munch import DefaultMunch
 
 # -----------------------------------------------
 # model config 
-network = 'TaDiff_Net' # nnUNet， ViolaUNet_s
+network = 'TaDiff_Net' 
 data_pool = ['sailor', 'lumiere']
 # ms3
 data_dir = {'sailor': '/home/brian/project/pl_ddpm/src/data/sailor_npy', 
