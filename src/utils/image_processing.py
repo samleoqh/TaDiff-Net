@@ -202,3 +202,24 @@ def merge_batch_slices(
         output[..., indices[i]] = slices[i]
     
     return output
+
+# def normalize_to_1(tensor_arr):
+#     """Normalize tensor to [0,1] range."""
+#     min_arr = torch.amin(tensor_arr, (2,3), keepdim=True)
+#     max_arr = torch.amax(tensor_arr, (2,3), keepdim=True)
+#     return (tensor_arr-min_arr) / (max_arr - min_arr + 1.e-7)
+
+# def to_pil_image(arr, to_rgb=False):
+#     """Convert array to PIL Image."""
+#     normalized = ((arr - arr.min()) / (arr.max() - arr.min() + 1.e-8) * 255.9).astype(np.uint8)
+#     if to_rgb:
+#         return Image.fromarray(normalized).convert('RGB')
+#     return Image.fromarray(normalized)
+
+# def create_noise_tensor(batch_size, channels, height, width, device):
+#     """Create random noise tensor."""
+#     return torch.randn((batch_size, channels, height, width)).to(device)
+
+# def extract_slice(tensor, indices):
+#     """Extract slice from tensor at given indices."""
+#     return tensor[..., indices]
