@@ -13,6 +13,27 @@ from monai.transforms import (
     CenterSpatialCropd, SpatialPadd, CropForegroundd
 )
 
+
+class MergeMultiLabels(MapTransform):
+    """Convert multi-class labels to binary labels.
+    """
+    def __call__(self, data):
+        for key in self.key_iterator(data):
+            data[key] = data[key] > 0 # merge all lables 1, 2, 3, ... to be 1.
+        return data
+
+
+npz_keys = ['image', 'label', 'days', 'treatment']
+
+val_transforms = Compose([
+        LoadImaged(keys=npz_keys, image_only=True),
+        CropForegroundd(keys=["image", "label"], source_key="image"),
+        CenterSpatialCropd(keys=["image", "label"], roi_size=[192, 192, 192]),
+        SpatialPadd(keys=["image", "label"], spatial_size=(192, 192, 192)),
+        MergeMultiLabels(keys=["label"]),
+        # ScaleIntensityd(keys=["label"], minv=0., maxv=1., ),  # to scale 0-255 to 0-1 in some case
+    ])
+
 class MergeMultiLabels(MapTransform):
     """Convert multi-class labels to binary labels.
     
@@ -66,7 +87,7 @@ def load_data(test_file_list: Optional[List[Dict[str, str]]] = None) -> DataLoad
         return 0
         
     transform = get_transform_pipeline()
-    test_dataset = CacheDataset(data=test_file_list, transform=transform)
+    test_dataset = CacheDataset(data=test_file_list, transform=val_transforms)
     
     # Only support bs=1, num_worker=0 for support across platforms
     return DataLoader(test_dataset, batch_size=1, shuffle=False)
