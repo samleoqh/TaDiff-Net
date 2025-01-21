@@ -293,7 +293,7 @@ def save_visualization_results(
         
     # Save images with overlays and contours
     for img_name, img_3modal in images.items():
-        print(f'image: {img_name}, img_3modal.shape: {img_3modal.shape}')
+        # print(f'image: {img_name}, img_3modal.shape: {img_3modal.shape}')
         for i in range(3):  # For each modality
             img_data = img_3modal[i, :, :].astype(float)
             base_image = to_pil(img_data)
