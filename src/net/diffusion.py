@@ -16,25 +16,25 @@ class GaussianDiffusion():
             b0=1e-4
             bT=2e-2
             self.beta = torch.linspace(b0, bT, T, device=self.device)
+            self.alpha = 1 - self.beta
+            self.alphabar = torch.cumprod(self.alpha, dim=0)
         elif schedule == 'cosine':
             # Cosine noise schedule
-            t = torch.arange(0, T+1, 1, device=self.device)
-            self.alphabar = self.__cos_noise(t) / self.__cos_noise(torch.tensor(0, device=self.device))
-            self.beta = torch.clamp(1 - (self.alphabar[1:] / self.alphabar[:-1]), max=0.999)
+            s = 0.008
+            steps = T + 1
+            x = torch.linspace(0, T, steps)
+            alphas_cumprod = torch.cos(((x / T) + s) / (1 + s) * torch.pi * 0.5) ** 2
+            alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+            betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+            self.beta = torch.clip(betas, 0, 0.999)
+            self.alpha = 1 - self.beta
+            self.alphabar = torch.cumprod(self.alpha, dim=0)
             
         # Compute cumulative products
         self.betabar = torch.cumprod(self.beta, dim=0)
-        self.alpha = 1 - self.beta
-        self.alphabar = torch.cumprod(self.alpha, dim=0)
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphabar)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphabar)
 
-
-    def __cos_noise(self, t):
-        # Helper function for cosine noise schedule
-        offset = 0.008
-        return torch.cos(torch.tensor(np.pi * 0.5, device=self.device) *
-                        (t/self.T + offset) / (1+offset)) ** 2
    
     def sample(self, x0, t):
         # Sample from the diffusion process at time t
@@ -122,6 +122,69 @@ class GaussianDiffusion():
         return x0, y
 
     # def ddim_inverse(self, net, x, eta=0.0, steps=50, device='cpu'):
+
+    def dpm_solver_plus_plus_inverse(self, net, x, 
+                                     intv=None, treat_cond=None, i_tg=None, 
+                                     steps=None, step_mask=10, start_t=None,  device='cpu'):
+        # TODO 
+        # Inverse diffusion process for DPM-Solver++， not working well for now, need to fix some unknown bugs in the code.
+        b, _, h, w = x.shape
+        i_tg = i_tg if i_tg is not None else -torch.ones((b,), dtype=torch.int8)
+        # i_tg = i_tg.to(torch.int64)
+        steps = steps or self.T
+        
+        # Weight calculations
+        T_m = min(step_mask, steps)
+        w_p = self.alphabar[:T_m] / self.alphabar[:T_m].sum()
+        
+        y = torch.zeros_like(x[:, :4, :, :])
+        times = torch.linspace(0, self.T - 1, steps).long().to(self.device).flip(0)
+        
+        for t, t_next in zip(times[:-1], times[1:]):
+            with torch.no_grad():
+                pred = net(x, t.repeat(b).to(self.device), intv_t=intv, treat_code=treat_cond, i_tg=i_tg)
+                img_p, mask = pred[:, 4:7, :, :], pred[:, :4, :, :]
+            
+            
+                        # Reshape x for easier indexing
+            x = x.view(b, 4, 3, h, w).contiguous()
+            
+            # Extract and concatenate relevant slices of x
+            xt = [x[[i], j, :, :, :] for i, j in zip(range(b), i_tg)]
+            xt = torch.cat(xt, 0)
+            # xt = x.view(b, 4, 3, h, w).gather(1, i_tg[:, None, None, None, None].expand(-1, -1, 3, h, w)).squeeze(1)
+            
+            lambda_t, lambda_t_next = torch.log(self.alphabar[t]), torch.log(self.alphabar[t_next])
+            lambda_h = lambda_t - lambda_t_next
+            
+            D1 = (img_p - xt) / (1 - self.alphabar[t])
+            if t_next >= 0:
+                pred_next = net(x.view(b, 12, h, w), t_next.repeat(b).to(self.device), intv_t=intv, treat_code=treat_cond, i_tg=i_tg)
+                img_p_next = pred_next[:, 4:7, :, :]
+                D1_next = (img_p_next - xt) / (1 - self.alphabar[t_next])
+                D2 = (D1_next - D1) / lambda_h
+            else:
+                D2 = torch.zeros_like(D1)
+            
+            x_next = xt + (1 - self.alphabar[t]) * (
+                (1 - torch.exp(-lambda_h)) / lambda_h * D1 +
+                (torch.exp(-lambda_h) + lambda_h - 1) / lambda_h ** 2 * D2
+            )
+            
+            # Update x with new x0 estimate
+            x = x.view(b, 4, 3, h, w).contiguous()
+            for i, j in zip(range(b), i_tg):
+                x[i, j, :, :, :] = x_next[i, :, :, :]
+            
+            # Reshape x back to original shape
+            x = x.reshape(b, 12, h, w)
+            # x.view(b, 4, 3, h, w).scatter_(1, i_tg[:, None, None, None, None].expand(-1, -1, 3, h, w), x_next.unsqueeze(1))
+            
+            if t <= T_m:
+                y += mask * w_p[max(0, t-1)]
+        
+        return torch.tensor(x_next, device=self.device), torch.tensor(y, device=self.device)
+    
     def ddim_inverse(self, net, x=None, intv=None, treat_cond=None, i_tg= None,
                        steps=None, start_t=None, step_mask = 10, eta=0., device='cpu'):
         """
@@ -152,7 +215,7 @@ class GaussianDiffusion():
         # x0 = x[:, 9:12, :, :]
         
         # Extract conditional image if  i_tg is 3, meaning allways predict future images
-        # cond_img = x[:, 9:12, :, :]
+        # cond_img = x[:, 0:9, :, :]
         
         # Initialize target indices if not provided
         if i_tg is None:
@@ -173,7 +236,7 @@ class GaussianDiffusion():
                 img_p, mask = pred[:, 4:7, :, :], pred[:, 0:4, :, :]
             # print(f"Predicted img_p shape: {img_p.shape}, mask shape: {mask.shape}")
             
-            # Reshape x for easier indexing
+            # Reshape x for easier indexing with flexible i_tg indices
             x = x.view(b, 4, 3, h, w).contiguous()
 
             # Extract and concatenate relevant slices of x
@@ -184,6 +247,7 @@ class GaussianDiffusion():
             sqrt_recip_alphas_cumprod_t = 1. / torch.sqrt(self.alphabar[t])
             sqrt_one_minus_alphas_cumprod_t = self.sqrt_one_minus_alphas_cumprod[t]
             x0_pred = sqrt_recip_alphas_cumprod_t * xt - sqrt_one_minus_alphas_cumprod_t * img_p
+            
             if t_next < 0:
                 x_next = x0_pred
             else:
