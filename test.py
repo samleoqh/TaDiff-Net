@@ -146,9 +146,7 @@ def process_slice(
     # Extract relevant slices
     masks = labels[0, session_indices, :, :, :]
     masks = masks[:, :, :, slice_indices].permute(3, 0, 1, 2)
-    print(images.shape, masks.shape, session_indices)
     seq_imgs = images[0, session_indices, :, :, :, :]
-    print(seq_imgs.shape)
     seq_imgs = seq_imgs[:, :, :, :, slice_indices].permute(4, 0, 1, 2, 3)
     
     # Create noise and prepare target images
@@ -171,17 +169,29 @@ def process_slice(
     treatments_q = treatments[0, session_indices].repeat(num_samples, 1)
     
     # Run diffusion
-    diffusion = GaussianDiffusion(T=diffusion_steps, schedule='linear')
-    pred_img, seg_seq = diffusion.TaDiff_inverse(
+    diffusion = GaussianDiffusion(T=diffusion_steps, 
+                                  schedule="linear", # ,#"cosine", # 
+                                  )
+    # pred_img, seg_seq = diffusion.TaDiff_inverse(
+    pred_img, seg_seq = diffusion.ddim_inverse(
+    # pred_img, seg_seq = diffusion.dpm_solver_plus_plus_inverse(
         net=model,
-        start_t=diffusion_steps // 1.5,
-        steps=diffusion_steps // 1.5,
+        start_t=diffusion_steps,
+        steps=diffusion_steps,
         x=x_t,
         intv=[daysq[:, i].to(torch.float32) for i in range(4)],
         treat_cond=[treatments_q[:, i].to(torch.float32) for i in range(4)],
         i_tg=i_tg,
         device=device
     )
+    # pred_img, seg_seq = diffusion.unified_inverse_process(
+    #     net=model,
+    #     steps=diffusion_steps,
+    #     x=x_t,
+    #     intv=[daysq[:, i].to(torch.float32) for i in range(4)],
+    #     treat_cond=[treatments_q[:, i].to(torch.float32) for i in range(4)],
+    #     i_tg=i_tg,
+    # )
     
     # Process predictions
     seg_seq = torch.sigmoid(seg_seq)
@@ -225,6 +235,7 @@ def evaluate_predictions(
     #     'target_masks': masks # (samples, 4, H, W)
     # }
     # Save visualization results
+    
     save_visualization_results(
         session_path=session_path,
         file_prefix=f'target-sess-{session_idx:02d}-slice-{slice_idx:03d}',
@@ -233,8 +244,9 @@ def evaluate_predictions(
             'ground_truth': predictions['ground_truth'][0].cpu().numpy()
         },
         masks={
-            'prediction': avg_mask_pred.cpu().numpy(),
-            'ground_truth': predictions['target_masks'][0].cpu().numpy()
+            'pred_mask': avg_mask_pred.cpu().numpy(),
+            'gt_mask': predictions['target_masks'][0].cpu().numpy(),
+            'ref_mask': predictions['target_masks'][0].cpu().numpy(),
         }
     )
     
@@ -257,7 +269,9 @@ def evaluate_predictions(
     print(scores)
     return scores
 
-def get_test_files(data_root: str = "./data/lumiere", patient_ids: Optional[List[str]] = None) -> List[Dict[str, str]]:
+def get_test_files(data_root: str = "./data/lumiere",
+                   patient_ids: Optional[List[str]] = None,
+                   prefix: str = '') -> List[Dict[str, str]]:
     """
     Get list of test files for specified patients.
     
@@ -277,7 +291,7 @@ def get_test_files(data_root: str = "./data/lumiere", patient_ids: Optional[List
     for patient_id in patient_ids:
         file_dict = {}
         for key in npz_keys:
-            file_dict[key] = os.path.join(data_root, f'{patient_id}_{key}.npy')
+            file_dict[key] = os.path.join(data_root, f'{prefix}{patient_id}_{key}.npy')
         test_files.append(file_dict)
         
     return test_files
@@ -287,9 +301,9 @@ def main():
     # Configuration
     DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     CHECKPOINT_PATH = "./ckpt/s2_w_val_loss=0.00646-val_mse=0.0028-val_dice=0.811.ckpt"
-    SAVE_PATH = './paper_lumiere_eval_p42_ft2'
-    DIFFUSION_STEPS = 600
-    NUM_SAMPLES = 5
+    
+    DIFFUSION_STEPS = 50
+    NUM_SAMPLES = 4
     
     # Setup model and metrics
     model = Tadiff_model.load_from_checkpoint(CHECKPOINT_PATH, strict=False)
@@ -299,9 +313,12 @@ def main():
     metrics = setup_metrics(DEVICE)
     
     # Load data
-    patient_ids = ['042']
-    test_files = get_test_files(data_root="./data/lumiere", patient_ids=patient_ids)
+    # patient_ids = ['042']
+    patient_ids = ['17']
+    test_files = get_test_files(data_root="./data/sailor", patient_ids=patient_ids,
+                                prefix='sub-')
     dataloader = load_data(test_files)
+    SAVE_PATH = './paper_sailor_eval_p17_ddim_step50'
     
     # Process all data
     all_scores = {}
@@ -310,18 +327,21 @@ def main():
         
         # Process each session
         for target_session_idx in range(batch['label'].shape[1]):
-            session_scores = process_session(
-                patient_id=patient_ids[batch_idx],
-                session_idx=target_session_idx,
-                batch=batch,
-                model=model,
-                device=DEVICE,
-                metrics=metrics,
-                save_path=SAVE_PATH,
-                diffusion_steps=DIFFUSION_STEPS,
-                num_samples=NUM_SAMPLES
-            )
-            all_scores.update(session_scores)
+            if target_session_idx > 0: 
+                session_scores = process_session(
+                    patient_id=patient_ids[batch_idx],
+                    session_idx=target_session_idx,
+                    batch=batch,
+                    model=model,
+                    device=DEVICE,
+                    metrics=metrics,
+                    save_path=SAVE_PATH,
+                    diffusion_steps=DIFFUSION_STEPS,
+                    num_samples=NUM_SAMPLES
+                )
+                all_scores.update(session_scores)
+            else:
+                continue
     
     # Save results
     results_file = f'test-score_diffusionsteps-{DIFFUSION_STEPS}_samples-{NUM_SAMPLES}.csv'
