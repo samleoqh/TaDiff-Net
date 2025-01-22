@@ -124,6 +124,9 @@ from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 from PIL import Image, ImageFilter
 
 def to_pil(arr, toRGB=False):
+    # print("Array shape:", arr.shape)
+    arr = arr.astype(np.float32)  # Convert to float if it's not already
+
     if toRGB:
         return Image.fromarray((((arr - arr.min()) / (arr.max() - arr.min() + 1.e-8)) * 255.9).astype(np.uint8)).convert('RGB')
     else:
@@ -218,16 +221,16 @@ def draw_contour(
     edges_array = np.array(edges)
     
     # Convert image to RGBA
-    result = np.array(image)
+    result = np.array(image.convert('RGBA'))
     
-    # Add alpha channel if not present
-    if len(result.shape) == 3 and result.shape[2] == 3:
-        result = np.concatenate([result, np.full((*result.shape[:2], 1), 255)], axis=2)
-    
-    # Draw contour
-    result[np.nonzero(edges_array)] = list(color) + [255]
+    result[np.nonzero(edges_array)] = [x for x in list(color)] + [255]
     
     return Image.fromarray(result)
+
+ 
+def to_binary(pred, threshold=0.5):
+    th = pred.max() * threshold
+    return (pred>=th).astype(np.uint8)
 
 def overlay_maps(
     base_image: Image.Image,
@@ -252,7 +255,8 @@ def overlay_maps(
     # Create combined state map
     current_array = np.array(current_mask)
     past_array = np.array(past_mask)
-    state_map = (current_array > 0).astype(np.uint8) + 2 * (past_array > 0).astype(np.uint8)
+    state_map = np.uint8(to_binary(current_array) + 2 * to_binary(past_array))
+    # (current_array > 0).astype(np.uint8) + 2 * (past_array > 0).astype(np.uint8)
     
     # Create overlay
     overlay = Image.new('RGBA', base_image.size, (0, 0, 0, 0))
@@ -261,7 +265,7 @@ def overlay_maps(
     # Apply colors
     for state, color in COLOR_MAP.items():
         alpha = 0 if (state == 0 or state == 3) else transparency
-        overlay_array[state_map == state] = list(color) + [int(alpha * 255)]
+        overlay_array[state_map == state] = [x for x in list(color)]+ [int(alpha * 255)]
     
     overlay = Image.fromarray(overlay_array)
     
@@ -302,11 +306,14 @@ def save_visualization_results(
             base_image.save(os.path.join(session_path, f"{file_prefix}-image-modal{i}-{img_name}.png"))
         
         # Create and save overlay
-        if 'gt_mask' in masks and 'ref_mask' in masks:
-            overlay_image = overlay_maps(base_image, masks['gt_mask'], masks['ref_mask'])
+        if 'ref_mask' in masks and 'pred_mask' in masks:
+            overlay_image = overlay_maps(base_image, to_pil(masks['pred_mask'][3]), to_pil(masks['ref_mask'][2]))
             overlay_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_overlay.png"))
         
         # Create and save contour
         if 'gt_mask' in masks:
-            contour_image = draw_contour(base_image, Image.fromarray(masks['gt_mask']))
-            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour.png"))
+            contour_image = draw_contour(base_image, to_pil(masks['gt_mask'][3]))
+            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour_gt.png"))
+        if 'pred_mask' in masks:
+            contour_image = draw_contour(base_image, to_pil(masks['pred_mask'][3]))
+            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour_pred.png"))
