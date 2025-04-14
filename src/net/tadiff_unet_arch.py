@@ -20,16 +20,30 @@ from src.net.utils import (
     FourierFeatures,
 )
 
-# https://github.com/kyegomez/AttentionIsOFFByOne/blob/main/softmax_one/softmax_one.py
-# Define the softmax_one function with added one in the denominator , which helps to reduce
-#the negative impact impact of tiny values in the softmax function and improves numerical stability
+
 def softmax_one(x, dim=None, _stacklevel=3, dtype=None):
-    #subtract the max for stability
-    x = x - x.max(dim=dim, keepdim=True).values
-    #compute exponentials
-    exp_x = th.exp(x)
-    #compute softmax values and add on in the denominator
-    return exp_x / (1 + exp_x.sum(dim=dim, keepdim=True))
+    """
+    Numerically stable softmax variant with +1 in denominator.
+    
+    Improves stability by:
+    1. Subtracting max for numerical stability
+    2. Adding 1 to denominator to mitigate tiny value effects
+    
+    Args:
+        x: Input tensor
+        dim: Dimension to compute softmax over
+        _stacklevel: Internal parameter for warning traces
+        dtype: Optional output dtype
+        
+    Returns:
+        Tensor with softmax_one applied along specified dimension
+    
+    Note:
+        Adapted from: https://github.com/kyegomez/AttentionIsOFFByOne/blob/main/softmax_one/softmax_one.py
+    """
+    x = x - x.max(dim=dim, keepdim=True).values  # Subtract max for stability
+    exp_x = th.exp(x)  # Compute exponentials
+    return exp_x / (1 + exp_x.sum(dim=dim, keepdim=True))  # Softmax with +1 denominator
 
 
 def convert_module_to_f16(l):
@@ -54,7 +68,29 @@ def convert_module_to_f32(l):
 
 class AttentionPool2d(nn.Module):
     """
-    Adapted from CLIP: https://github.com/openai/CLIP/blob/main/clip/model.py
+    2D Attention Pooling layer adapted from CLIP architecture.
+    
+    Performs spatial attention pooling by:
+    1. Flattening spatial dimensions
+    2. Adding mean-pooled global feature
+    3. Applying learned positional embeddings
+    4. Computing attention-weighted features
+    
+    Args:
+        spacial_dim: Input spatial dimension (assumed square)
+        embed_dim: Input feature dimension
+        num_heads_channels: Channels per attention head
+        output_dim: Optional output dimension (defaults to embed_dim)
+        
+    Forward Input:
+        x: [batch_size, channels, height, width] feature map
+        
+    Forward Output:
+        [batch_size, output_dim] pooled features
+        
+    Note:
+        Original implementation from:
+        https://github.com/openai/CLIP/blob/main/clip/model.py
     """
 
     def __init__(
@@ -81,7 +117,7 @@ class AttentionPool2d(nn.Module):
         x = self.qkv_proj(x)
         x = self.attention(x)
         x = self.c_proj(x)
-        return x[:, :, 0]
+        return x[:, :, 0]  # Return pooled features
 
 
 class TimestepBlock(nn.Module):
@@ -291,10 +327,29 @@ class ResBlock(TimestepBlock):
 
 class AttentionBlock(nn.Module):
     """
-    An attention block that allows spatial positions to attend to each other.
-
-    Originally ported from here, but adapted to the N-d case.
-    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
+    N-dimensional self-attention block for diffusion models.
+    
+    Implements multi-head attention with optional checkpointing and supports:
+    - Both legacy and optimized attention computation orders
+    - Flexible head configuration via channels or num_heads
+    - Memory-efficient gradient checkpointing
+    
+    Args:
+        channels: Input feature channels
+        num_heads: Number of attention heads
+        num_head_channels: Channels per head (alternative to num_heads)
+        use_checkpoint: Enable gradient checkpointing
+        use_new_attention_order: Use optimized attention computation order
+        
+    Forward Input:
+        x: [batch_size, channels, *spatial_dims] feature tensor
+        
+    Forward Output:
+        [batch_size, channels, *spatial_dims] attended features
+        
+    Note:
+        Adapted from:
+        https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66
     """
 
     def __init__(
@@ -318,11 +373,9 @@ class AttentionBlock(nn.Module):
         self.norm = normalization(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
         if use_new_attention_order:
-            # split qkv before split heads
-            self.attention = QKVAttention(self.num_heads)
+            self.attention = QKVAttention(self.num_heads)  # Split qkv before heads
         else:
-            # split heads before split qkv
-            self.attention = QKVAttentionLegacy(self.num_heads)
+            self.attention = QKVAttentionLegacy(self.num_heads)  # Split heads first
 
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
 
@@ -331,17 +384,35 @@ class AttentionBlock(nn.Module):
 
     def _forward(self, x):
         b, c, *spatial = x.shape
-        x = x.reshape(b, c, -1)
-        qkv = self.qkv(self.norm(x))
-        h = self.attention(qkv)
-        h = self.proj_out(h)
-        return (x + h).reshape(b, c, *spatial)
+        x = x.reshape(b, c, -1)  # Flatten spatial dimensions
+        qkv = self.qkv(self.norm(x))  # Compute queries, keys, values
+        h = self.attention(qkv)  # Apply attention
+        h = self.proj_out(h)  # Project back
+        return (x + h).reshape(b, c, *spatial)  # Residual connection
 
 
 
 class QKVAttentionLegacy(nn.Module):
     """
-    A module which performs QKV attention. Matches legacy QKVAttention + input/ouput heads shaping
+    Legacy QKV attention implementation that splits heads before splitting QKV.
+    
+    Performs multi-head attention with:
+    - Split heads first architecture
+    - Scaled dot-product attention
+    - Softmax_one for numerical stability
+    - Efficient einsum operations
+    
+    Args:
+        n_heads: Number of attention heads
+        
+    Forward Input:
+        qkv: [batch_size, (heads * 3 * channels), seq_len] concatenated Q,K,V
+        
+    Forward Output:
+        [batch_size, (heads * channels), seq_len] attention output
+        
+    Note:
+        Uses softmax_one instead of standard softmax for better numerical stability
     """
 
     def __init__(self, n_heads):
@@ -349,24 +420,23 @@ class QKVAttentionLegacy(nn.Module):
         self.n_heads = n_heads
 
     def forward(self, qkv):
-        """
-        Apply QKV attention.
-
-        :param qkv: an [N x (H * 3 * C) x T] tensor of Qs, Ks, and Vs.
-        :return: an [N x (H * C) x T] tensor after attention.
-        """
         bs, width, length = qkv.shape
         assert width % (3 * self.n_heads) == 0
         ch = width // (3 * self.n_heads)
+        
+        # Split into heads first, then QKV
         q, k, v = qkv.reshape(bs * self.n_heads, ch * 3, length).split(ch, dim=1)
+        
+        # Scaled dot-product attention
         scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = th.einsum(
-            "bct,bcs->bts", q * scale, k * scale
-        )  # More stable with f16 than dividing afterwards
-        # weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
+        weight = th.einsum("bct,bcs->bts", q * scale, k * scale)
+        
+        # Attention weights with softmax_one
         weight = softmax_one(weight.float(), dim=-1).type(weight.dtype)
+        
+        # Apply attention to values
         a = th.einsum("bts,bcs->bct", weight, v)
-        return a.reshape(bs, -1, length)
+        return a.reshape(bs, -1, length)  # Merge heads
 
     @staticmethod
     def count_flops(model, _x, y):
@@ -375,7 +445,25 @@ class QKVAttentionLegacy(nn.Module):
 
 class QKVAttention(nn.Module):
     """
-    A module which performs QKV attention and splits in a different order.
+    Optimized QKV attention that splits QKV before splitting heads.
+    
+    Performs multi-head attention with:
+    - Split QKV first architecture (more efficient)
+    - Scaled dot-product attention
+    - Softmax_one for numerical stability
+    - Optimized memory layout
+    
+    Args:
+        n_heads: Number of attention heads
+        
+    Forward Input:
+        qkv: [batch_size, (3 * heads * channels), seq_len] concatenated Q,K,V
+        
+    Forward Output:
+        [batch_size, (heads * channels), seq_len] attention output
+        
+    Note:
+        More efficient than legacy version due to better memory access patterns
     """
 
     def __init__(self, n_heads):
@@ -383,67 +471,93 @@ class QKVAttention(nn.Module):
         self.n_heads = n_heads
 
     def forward(self, qkv):
-        """
-        Apply QKV attention.
-
-        :param qkv: an [N x (3 * H * C) x T] tensor of Qs, Ks, and Vs.
-        :return: an [N x (H * C) x T] tensor after attention.
-        """
         bs, width, length = qkv.shape
         assert width % (3 * self.n_heads) == 0
         ch = width // (3 * self.n_heads)
+        
+        # Split QKV first, then heads
         q, k, v = qkv.chunk(3, dim=1)
+        
+        # Scaled dot-product attention
         scale = 1 / math.sqrt(math.sqrt(ch))
         weight = th.einsum(
             "bct,bcs->bts",
             (q * scale).view(bs * self.n_heads, ch, length),
             (k * scale).view(bs * self.n_heads, ch, length),
-        )  # More stable with f16 than dividing afterwards
-        # weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
+        )
+        
+        # Attention weights with softmax_one
         weight = softmax_one(weight.float(), dim=-1).type(weight.dtype)
+        
+        # Apply attention to values
         a = th.einsum("bts,bcs->bct", weight, v.reshape(bs * self.n_heads, ch, length))
-        return a.reshape(bs, -1, length)
+        return a.reshape(bs, -1, length)  # Merge heads
 
     @staticmethod
     def count_flops(model, _x, y):
         return count_flops_attn(model, _x, y)
 
 
-
 def expand_to_planes(input, shape):
+    """
+    Expand 1D or 2D input to match target feature plane dimensions.
+    
+    Args:
+        input: [batch_size, channels] or [batch_size, channels, 1, 1] tensor
+        shape: Target shape tuple to match spatial dimensions
+        
+    Returns:
+        [batch_size, channels, height, width] tensor with input repeated spatially
+    """
+    return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
     return input[..., None, None].repeat([1, 1, shape[2], shape[3]])
 
 
 
 class TaDiff_Net(nn.Module):
     """
-    The full UNet model with attention and timestep embedding.
+    A specialized UNet model for treatment-aware diffusion processes with temporal conditioning.
 
-    :param in_channels: channels in the input Tensor.
-    :param model_channels: base channel count for the model.
-    :param out_channels: channels in the output Tensor.
-    :param num_res_blocks: number of residual blocks per downsample.
-    :param attention_resolutions: a collection of downsample rates at which
-        attention will take place. May be a set, list, or tuple.
-        For example, if this contains 4, then at 4x downsampling, attention
-        will be used.
-    :param dropout: the dropout probability.
-    :param channel_mult: channel multiplier for each level of the UNet.
-    :param conv_resample: if True, use learned convolutions for upsampling and
-        downsampling.
-    :param dims: determines if the signal is 1D, 2D, or 3D.
-    :param num_classes: if specified (as an int), then this model will be
-        class-conditional with `num_classes` classes.
-    :param use_checkpoint: use gradient checkpointing to reduce memory usage.
-    :param num_heads: the number of attention heads in each attention layer.
-    :param num_heads_channels: if specified, ignore num_heads and instead use
-                               a fixed channel width per attention head.
-    :param num_heads_upsample: works with num_heads to set a different number
-                               of heads for upsampling. Deprecated.
-    :param use_scale_shift_norm: use a FiLM-like conditioning mechanism.
-    :param resblock_updown: use residual blocks for up/downsampling.
-    :param use_new_attention_order: use a different attention pattern for potentially
-                                    increased efficiency.
+    This model extends standard diffusion UNet architecture with:
+    - Treatment code conditioning (treat_code)
+    - Temporal interval conditioning between reference/target exams (intv_t)
+    - Target index specification (i_tg)
+
+    Key Features:
+    - Three parallel embedding streams: time, days, and treatments
+    - Relative treatment-day difference computation
+    - Multi-scale feature conditioning
+    - Custom softmax_one attention for numerical stability
+
+    Architecture Parameters:
+    :param in_channels: channels in the input Tensor
+    :param model_channels: base channel count for the model
+    :param out_channels: channels in the output Tensor
+    :param num_res_blocks: number of residual blocks per downsample
+    :param attention_resolutions: collection of downsample rates for attention layers
+    :param dropout: dropout probability
+    :param channel_mult: channel multiplier for each UNet level
+    :param conv_resample: use learned convolutions for up/downsampling if True
+    :param dims: dimensionality of input (1D, 2D, or 3D)
+    :param num_classes: optional class conditioning (int)
+    :param use_checkpoint: enable gradient checkpointing to reduce memory
+    :param num_heads: number of attention heads
+    :param num_head_channels: fixed channel width per attention head (overrides num_heads)
+    :param use_scale_shift_norm: use FiLM-like conditioning
+    :param resblock_updown: use residual blocks for up/downsampling
+    :param use_new_attention_order: use optimized attention pattern
+
+    Treatment/Temporal Parameters:
+    :param image_size: input image dimensions
+    :param use_fp16: use float16 precision if True
+    :param num_heads_upsample: separate head count for upsampling (deprecated)
+
+    Forward Pass Inputs:
+    :param x: input tensor [N x C x ...]
+    :param timesteps: diffusion timesteps [N]
+    :param intv_t: list of interval days between reference/target exams
+    :param treat_code: encoded treatment labels [N]
+    :param i_tg: target indices [N] (default: -1)
     """
 
     def __init__(
@@ -731,234 +845,3 @@ class TaDiff_Net(nn.Module):
         h = h.type(x.dtype)
         return self.out(h)
 
-
-
-
-class EncoderUNetModel(nn.Module):
-    """
-    The half UNet model with attention and timestep embedding.
-
-    For usage, see UNet.
-    """
-
-    def __init__(
-        self,
-        image_size,
-        in_channels,
-        model_channels,
-        out_channels,
-        num_res_blocks,
-        attention_resolutions,
-        dropout=0,
-        channel_mult=(1, 2, 4, 8),
-        conv_resample=True,
-        dims=2,
-        use_checkpoint=False,
-        use_fp16=False,
-        num_heads=1,
-        num_head_channels=-1,
-        num_heads_upsample=-1,
-        use_scale_shift_norm=False,
-        resblock_updown=False,
-        use_new_attention_order=False,
-        pool="adaptive",
-    ):
-        super().__init__()
-
-        if num_heads_upsample == -1:
-            num_heads_upsample = num_heads
-
-        self.in_channels = in_channels
-        self.model_channels = model_channels
-        self.out_channels = out_channels
-        self.num_res_blocks = num_res_blocks
-        self.attention_resolutions = attention_resolutions
-        self.dropout = dropout
-        self.channel_mult = channel_mult
-        self.conv_resample = conv_resample
-        self.use_checkpoint = use_checkpoint
-        self.dtype = th.float16 if use_fp16 else th.float32
-        self.num_heads = num_heads
-        self.num_head_channels = num_head_channels
-        self.num_heads_upsample = num_heads_upsample
-
-        time_embed_dim = model_channels * 4
-        self.time_embed = nn.Sequential(
-            linear(model_channels, time_embed_dim),
-            nn.SiLU(),
-            linear(time_embed_dim, time_embed_dim),
-        )
-
-        ch = int(channel_mult[0] * model_channels)
-        self.input_blocks = nn.ModuleList(
-            [TimestepEmbedSequential(conv_nd(dims, in_channels, ch, 3, padding=1))]
-        )
-        self._feature_size = ch
-        input_block_chans = [ch]
-        ds = 1
-        for level, mult in enumerate(channel_mult):
-            for _ in range(num_res_blocks):
-                layers = [
-                    ResBlock(
-                        ch,
-                        time_embed_dim,
-                        dropout,
-                        out_channels=int(mult * model_channels),
-                        dims=dims,
-                        use_checkpoint=use_checkpoint,
-                        use_scale_shift_norm=use_scale_shift_norm,
-                    )
-                ]
-                ch = int(mult * model_channels)
-                if ds in attention_resolutions:
-                    layers.append(
-                        AttentionBlock(
-                            ch,
-                            use_checkpoint=use_checkpoint,
-                            num_heads=num_heads,
-                            num_head_channels=num_head_channels,
-                            use_new_attention_order=use_new_attention_order,
-                        )
-                    )
-                self.input_blocks.append(TimestepEmbedSequential(*layers))
-                self._feature_size += ch
-                input_block_chans.append(ch)
-            if level != len(channel_mult) - 1:
-                out_ch = ch
-                self.input_blocks.append(
-                    TimestepEmbedSequential(
-                        ResBlock(
-                            ch,
-                            time_embed_dim,
-                            dropout,
-                            out_channels=out_ch,
-                            dims=dims,
-                            use_checkpoint=use_checkpoint,
-                            use_scale_shift_norm=use_scale_shift_norm,
-                            down=True,
-                        )
-                        if resblock_updown
-                        else Downsample(
-                            ch, conv_resample, dims=dims, out_channels=out_ch
-                        )
-                    )
-                )
-                ch = out_ch
-                input_block_chans.append(ch)
-                ds *= 2
-                self._feature_size += ch
-
-        self.middle_block = TimestepEmbedSequential(
-            ResBlock(
-                ch,
-                time_embed_dim,
-                dropout,
-                dims=dims,
-                use_checkpoint=use_checkpoint,
-                use_scale_shift_norm=use_scale_shift_norm,
-            ),
-            AttentionBlock(
-                ch,
-                use_checkpoint=use_checkpoint,
-                num_heads=num_heads,
-                num_head_channels=num_head_channels,
-                use_new_attention_order=use_new_attention_order,
-            ),
-            ResBlock(
-                ch,
-                time_embed_dim,
-                dropout,
-                dims=dims,
-                use_checkpoint=use_checkpoint,
-                use_scale_shift_norm=use_scale_shift_norm,
-            ),
-        )
-        self._feature_size += ch
-        self.pool = pool
-        if pool == "adaptive":
-            self.out = nn.Sequential(
-                normalization(ch),
-                nn.SiLU(),
-                nn.AdaptiveAvgPool2d((1, 1)),
-                zero_module(conv_nd(dims, ch, out_channels, 1)),
-                nn.Flatten(),
-            )
-        elif pool == "attention":
-            assert num_head_channels != -1
-            self.out = nn.Sequential(
-                normalization(ch),
-                nn.SiLU(),
-                AttentionPool2d(
-                    (image_size // ds), ch, num_head_channels, out_channels
-                ),
-            )
-        elif pool == "spatial":
-            self.out = nn.Sequential(
-                nn.Linear(self._feature_size, 2048),
-                nn.ReLU(),
-                nn.Linear(2048, self.out_channels),
-            )
-        elif pool == "spatial_v2":
-            self.out = nn.Sequential(
-                nn.Linear(self._feature_size, 2048),
-                normalization(2048),
-                nn.SiLU(),
-                nn.Linear(2048, self.out_channels),
-            )
-        else:
-            raise NotImplementedError(f"Unexpected {pool} pooling")
-
-    def convert_to_fp16(self):
-        """
-        Convert the torso of the model to float16.
-        """
-        self.input_blocks.apply(convert_module_to_f16)
-        self.middle_block.apply(convert_module_to_f16)
-
-    def convert_to_fp32(self):
-        """
-        Convert the torso of the model to float32.
-        """
-        self.input_blocks.apply(convert_module_to_f32)
-        self.middle_block.apply(convert_module_to_f32)
-
-    def forward(self, x, timesteps):
-        """
-        Apply the model to an input batch.
-
-        :param x: an [N x C x ...] Tensor of inputs.
-        :param timesteps: a 1-D batch of timesteps.
-        :return: an [N x K] Tensor of outputs.
-        """
-        emb = self.time_embed(timestep_embedding(timesteps, self.model_channels))
-        
-        results = []
-        h = x.type(self.dtype)
-        for module in self.input_blocks:
-            h = module(h, emb)
-            if self.pool.startswith("spatial"):
-                results.append(h.type(x.dtype).mean(dim=(2, 3)))
-        h = self.middle_block(h, emb)
-        if self.pool.startswith("spatial"):
-            results.append(h.type(x.dtype).mean(dim=(2, 3)))
-            h = th.cat(results, axis=-1)
-            return self.out(h)
-        else:
-            h = h.type(x.dtype)
-            return self.out(h)
-
-if __name__ == '__main__':
-    time_embed = nn.Sequential(
-            linear(2, 24),
-            nn.SiLU(),
-            linear(24, 12),
-        )
-    import torch
-    t1 = torch.tensor([0])
-    t2 = torch.tensor([-48])
-    emb1= timestep_embedding(t1, 2)
-    emb2= timestep_embedding(t1, 2)
-    emb=(time_embed(emb1+emb2))/2
-    
-    print(emb)
-    
