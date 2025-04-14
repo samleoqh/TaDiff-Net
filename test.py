@@ -1,6 +1,29 @@
 """
-TaDiff Model Testing Script
-This script handles testing of the TaDiff model and generates visualizations of the results.
+TaDiff Model Testing and Evaluation Script
+
+This script provides comprehensive testing and evaluation of the TaDiff model for medical image analysis.
+Key features include:
+- Automated evaluation of model predictions against ground truth
+- Support for multiple diffusion sampling methods (DDIM, DPM-Solver++)
+- Quantitative metric calculation (Dice, MSE, etc.)
+- Visualization of predictions and uncertainty
+- Batch processing of patient sessions
+- Ensemble prediction generation
+
+The script processes 3D medical volumes by:
+1. Identifying tumor-containing slices
+2. Running diffusion-based predictions
+3. Calculating evaluation metrics
+4. Generating visualizations
+
+Typical workflow:
+1. Load pre-trained model checkpoint
+2. Configure evaluation parameters
+3. Process patient data
+4. Save results and visualizations
+
+Example usage:
+    python test.py --patient_ids 17 42 --diffusion_steps 50 --num_samples 4
 """
 from typing import List, Dict, Optional
 
@@ -45,21 +68,38 @@ def process_session(
     target_idx: int = 3
 ) -> Dict[str, Dict]:
     """
-    Process a single session of data.
+    Process a single patient session through the TaDiff model pipeline.
+    
+    The workflow includes:
+    1. Data preparation and tumor volume calculation
+    2. Identification of key tumor slices
+    3. Diffusion-based prediction generation
+    4. Metric calculation and visualization
     
     Args:
-        session_idx: Index of the session to process
-        batch: Batch of data
-        model: TaDiff model
-        device: Device to run on
-        metrics: Dictionary of metrics
-        save_path: Path to save results
-        diffusion_steps: Number of diffusion steps
-        num_samples: Number of samples to generate
-        target_idx: Target session index
+        patient_id: Unique patient identifier (str)
+        session_idx: Index of the session being processed (int)
+        batch: Dictionary containing:
+            - 'image': Input scans [1, num_sessions, C, H, W, D]
+            - 'label': Segmentation masks [1, num_sessions, H, W, D]
+            - 'days': Treatment day values [1, num_sessions]
+            - 'treatment': Treatment codes [1, num_sessions]
+        model: Loaded Tadiff_model instance
+        device: Target device (torch.device)
+        metrics: Dictionary of metric functions from setup_metrics()
+        save_path: Base directory for saving results (str)
+        diffusion_steps: Number of diffusion steps (default: 600)
+        num_samples: Number of predictions to generate (default: 5)
+        target_idx: Index of target session for prediction (default: 3)
         
     Returns:
-        Dictionary of evaluation scores
+        Dict[str, Dict]: Nested dictionary containing:
+            - Keys: Slice indices (f"slice_{idx}")
+            - Values: Dictionary of metric scores for each sample
+            
+    Outputs:
+        - Visualizations saved to {save_path}/p-{patient_id}/-ses-{session_idx:02d}/
+        - Console output of processing status
     """
     session_scores = {}
     # patient_id = patient_id
@@ -132,7 +172,39 @@ def process_slice(
     num_samples: int,
     target_idx: int
 ) -> Dict[str, Dict]:
-    """Process a single slice of data."""
+    """
+    Process a single 2D slice through the TaDiff prediction pipeline.
+    
+    The workflow includes:
+    1. Data preparation and noise initialization
+    2. Diffusion-based inverse process (DDIM or DPM-Solver++)
+    3. Prediction post-processing
+    4. Metric calculation
+    
+    Args:
+        slice_idx: Z-index of the slice being processed
+        session_idx: Index of the session being processed
+        images: Input scans [1, num_sessions, C, H, W, D]
+        labels: Segmentation masks [1, num_sessions, H, W, D]
+        days: Treatment day values [1, num_sessions]
+        treatments: Treatment codes [1, num_sessions]
+        model: Loaded Tadiff_model instance
+        device: Target device
+        metrics: Dictionary of metric functions
+        session_path: Directory for saving results
+        diffusion_steps: Number of diffusion steps
+        num_samples: Number of predictions to generate
+        target_idx: Index of target session for prediction
+        
+    Returns:
+        Dict[str, Dict]: Dictionary containing:
+            - Keys: Sample identifiers (f"sample_{n}" or "ensemble")
+            - Values: Dictionary of metric scores
+            
+    Outputs:
+        - Visualizations saved to {session_path}/
+        - Console output of processing status
+    """
     # Prepare data
     slice_indices = [slice_idx] * num_samples
     session_indices = np.array([
@@ -220,7 +292,33 @@ def evaluate_predictions(
     slice_idx: int,
     session_path: str
 ) -> Dict[str, Dict]:
-    """Evaluate predictions and save visualizations."""
+    """
+    Evaluate model predictions and generate visualizations.
+    
+    Performs:
+    1. Ensemble prediction averaging
+    2. Metric calculation for individual and ensemble predictions
+    3. Visualization of predictions vs ground truth
+    4. Result saving
+    
+    Args:
+        predictions: Dictionary containing:
+            - 'images': Predicted scans [num_samples, C, H, W]
+            - 'masks': Predicted segmentations [num_samples, 4, H, W]
+            - 'ground_truth': Target scans [num_samples, C, H, W]
+            - 'target_masks': Target segmentations [num_samples, 4, H, W]
+        metrics: Dictionary of metric functions
+        session_idx: Index of the session being processed
+        slice_idx: Z-index of the slice being processed
+        session_path: Directory for saving results
+        
+    Returns:
+        Dict[str, Dict]: Dictionary of metric scores for each sample and ensemble
+        
+    Outputs:
+        - PNG visualizations saved to {session_path}/
+        - Console output of evaluation metrics
+    """
     scores = {}
     
     # Calculate average predictions
@@ -273,14 +371,23 @@ def get_test_files(data_root: str = "./data/lumiere",
                    patient_ids: Optional[List[str]] = None,
                    prefix: str = '') -> List[Dict[str, str]]:
     """
-    Get list of test files for specified patients.
+    Retrieve test data file paths for specified patients.
     
     Args:
-        data_root: Root directory containing the data
-        patient_ids: List of patient IDs to process. If None, defaults to ['042']
+        data_root: Root directory containing .npy files (str)
+        patient_ids: List of patient IDs to process (List[str]).
+                    If None, defaults to ['042']
+        prefix: Optional filename prefix (str)
         
     Returns:
-        List of dictionaries containing file paths for each patient
+        List[Dict[str, str]]: List of dictionaries with keys:
+            - 'image': Path to image .npy file
+            - 'label': Path to label .npy file
+            - 'days': Path to days .npy file
+            - 'treatment': Path to treatment .npy file
+            
+    Raises:
+        FileNotFoundError: If required .npy files are missing
     """
     # if patient_ids is None:
     #     patient_ids = ['042']
@@ -297,7 +404,25 @@ def get_test_files(data_root: str = "./data/lumiere",
     return test_files
 
 def main():
-    """Main execution function."""
+    """
+    Main execution function for TaDiff model testing.
+    
+    Workflow:
+    1. Load model checkpoint
+    2. Configure evaluation parameters
+    3. Load and process test data
+    4. Generate and evaluate predictions
+    5. Save metrics and visualizations
+    
+    Configuration:
+    - Device: Automatically uses CUDA if available
+    - Checkpoint: Loads from ./ckpt/
+    - Diffusion: 50 steps by default
+    - Samples: 4 predictions per slice
+    - Output: Saves to ./paper_sailor_eval_p17_ddim_step50/
+    
+    To modify behavior, edit the constants at the start of the function.
+    """
     # Configuration
     DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     CHECKPOINT_PATH = "./ckpt/s2_w_val_loss=0.00646-val_mse=0.0028-val_dice=0.811.ckpt"
