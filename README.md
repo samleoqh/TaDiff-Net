@@ -1,5 +1,6 @@
 # TaDiff-Net
 This repository contains code for the paper "[Treatment-aware Diffusion Probabilistic Model for Longitudinal MRI Generation and Diffuse Glioma Growth Prediction](https://doi.org/10.1109/TMI.2025.3533038)".
+This repository contains code for the paper "[Treatment-aware Diffusion Probabilistic Model for Longitudinal MRI Generation and Diffuse Glioma Growth Prediction](https://doi.org/10.1109/TMI.2025.3533038)".
 
 <div style="display: flex; align-items: unsafe center;">
     <img src="demo_1.gif" alt="Demo GIF" style="height: 260px;">
@@ -7,6 +8,7 @@ This repository contains code for the paper "[Treatment-aware Diffusion Probabil
 </div>
 
 ## Overview
+We propose a novel end-to-end network capable of future predictions of tumor masks and multi-parametric magnetic resonance images (MRI) of how the tumor will look at any future time points for different treatment plans. Our approach is based on cutting-edge diffusion probabilistic models and deep-segmentation neural networks. We included sequential multi-parametric MRI and treatment information as conditioning inputs to guide the generative diffusion process as well as a joint segmentation process. This allows for tumor growth estimates and realistic MRI generation at any given treatment and time point. We trained the model using real-world [postoperative longitudinal MRI data](https://search.kg.ebrains.eu/instances/cae85bcb-8526-442d-b0d8-a866425efff8) with glioma tumor growth trajectories represented as tumor segmentation maps over time. The model demonstrates promising performance across various tasks, including generating high-quality multi-parametric MRI with tumor masks, performing time-series tumor segmentations, and providing uncertainty estimates. Combined with the treatment-aware generated MRI, the tumor growth predictions with uncertainty estimates can provide useful information for clinical decision-making.
 We propose a novel end-to-end network capable of future predictions of tumor masks and multi-parametric magnetic resonance images (MRI) of how the tumor will look at any future time points for different treatment plans. Our approach is based on cutting-edge diffusion probabilistic models and deep-segmentation neural networks. We included sequential multi-parametric MRI and treatment information as conditioning inputs to guide the generative diffusion process as well as a joint segmentation process. This allows for tumor growth estimates and realistic MRI generation at any given treatment and time point. We trained the model using real-world [postoperative longitudinal MRI data](https://search.kg.ebrains.eu/instances/cae85bcb-8526-442d-b0d8-a866425efff8) with glioma tumor growth trajectories represented as tumor segmentation maps over time. The model demonstrates promising performance across various tasks, including generating high-quality multi-parametric MRI with tumor masks, performing time-series tumor segmentations, and providing uncertainty estimates. Combined with the treatment-aware generated MRI, the tumor growth predictions with uncertainty estimates can provide useful information for clinical decision-making.
 
 
@@ -30,7 +32,7 @@ TaDiff-Net/
 ├── ckpt/                   # Model checkpoints
 ├── data/                   # Data directory
 ├── test.py                 # Testing script
-├── inference.py               # Inference script
+├── infer.py               # Inference script
 └── README.md              # This file
 ```
 
@@ -94,26 +96,25 @@ Output will be saved in the configured save path with:
 To generate predictions without ground truth:
 
 ```bash
-python inference.py --input_day 20 --input_treatment 1
+python infer.py
 ```
 
 This will:
 1. Load the model and input data
-2. Generate predictions for input patient and target slice
-3. Save ensemble predictions and plot uncertainty maps
+2. Generate predictions for each patient and slice
+3. Save ensemble predictions and uncertainty maps
 
 Output structure:
 ```
 save_path/
-├── p-{patient_id}/ses-{target_sess}/day-{target_day}
-│   ├── treatment-{0/1}/
-│   │   ├── prediction-slice-{}.npy
-│   │   ├── segmentation-slice-{}.npy
-│   │   ├── ses-{}-slice-{}-pred_{t1,t1c,flair}.png    # Average predictions (generated 3 modal MRI slices)
-│   │   ├── ses-{}-slice-{}-pred_mask.png            # predicted target tumor segmentation mask
-│   │   ├── ses-{}-slice-{}-uncertainty_{t1,t1c,flair}.png # predictied 3 modal image uncertainty
-│   │   ├── ses-{}-slice-{}-uncertainty_mask.png     # target tumor mask uncertainty
-│   
+├── p-{patient_id}/
+│   ├── slice-000/
+│   │   ├── pred_{t1,t1c,flair}.png    # Average predictions (generated 3 modal MRI slices)
+│   │   ├── pred_mask.png            # predicted target tumor segmentation mask
+│   │   ├── uncertainty_{t1,t1c,flair}.png # predictied 3 modal image uncertainty
+│   │   ├── uncertainty_mask.png     # target tumor mask uncertainty
+│   └── slice-001/
+│       └── ...
 ```
 
 ## Model Details
@@ -146,12 +147,23 @@ The visualization module provides:
 ## Citation
 
 If you find this code helps in your work, please cite:
+
+If you find this code helps in your work, please cite:
 ```
 @ARTICLE{10851394,
   author={Liu, Qinghui and Fuster-Garcia, Elies and Thokle Hovden, Ivar and MacIntosh, Bradley J. and Grødem, Edvard O. S. and Brandal, Petter and Lopez-Mateu, Carles and Sederevičius, Donatas and Skogen, Karoline and Schellhorn, Till and Bjørnerud, Atle and Eeg Emblem, Kyrre},
   journal={IEEE Transactions on Medical Imaging}, 
   title={Treatment-Aware Diffusion Probabilistic Model for Longitudinal MRI Generation and Diffuse Glioma Growth Prediction}, 
+@ARTICLE{10851394,
+  author={Liu, Qinghui and Fuster-Garcia, Elies and Thokle Hovden, Ivar and MacIntosh, Bradley J. and Grødem, Edvard O. S. and Brandal, Petter and Lopez-Mateu, Carles and Sederevičius, Donatas and Skogen, Karoline and Schellhorn, Till and Bjørnerud, Atle and Eeg Emblem, Kyrre},
+  journal={IEEE Transactions on Medical Imaging}, 
+  title={Treatment-Aware Diffusion Probabilistic Model for Longitudinal MRI Generation and Diffuse Glioma Growth Prediction}, 
   year={2025},
+  volume={44},
+  number={6},
+  pages={2449-2462},
+  keywords={Tumors;Magnetic resonance imaging;Predictive models;Brain modeling;Uncertainty;Data models;Probabilistic logic;Diffusion processes;Diffusion models;Computational modeling;Diffuse glioma;longitudinal MRI;diffusion probabilistic model;tumor growth prediction;deep learning},
+  doi={10.1109/TMI.2025.3533038}}
   volume={44},
   number={6},
   pages={2449-2462},
