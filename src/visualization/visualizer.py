@@ -123,197 +123,94 @@ import matplotlib as mpl
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 from PIL import Image, ImageFilter
 
-def to_pil(arr, toRGB=False):
-    # print("Array shape:", arr.shape)
-    arr = arr.astype(np.float32)  # Convert to float if it's not already
-
-    if toRGB:
-        return Image.fromarray((((arr - arr.min()) / (arr.max() - arr.min() + 1.e-8)) * 255.9).astype(np.uint8)).convert('RGB')
-    else:
-        return Image.fromarray((((arr - arr.min()) / (arr.max() - arr.min() + 1.e-8)) * 255.9).astype(np.uint8))
-
-
-# Configure matplotlib settings
-mpl.rc('image', cmap='gray')
-plt.rcParams.update({
-    "text.color": "white",
-    "axes.labelcolor": "white",
-    "xtick.color": "white",
-    "ytick.color": "white"
-})
-
-# Color mapping for different classes
-COLOR_MAP = {
-    0: (0, 0, 0),      # background, black
-    1: (0, 255, 0),    # class 1, green/growth
-    2: (0, 0, 255),    # class 2, blue/shrinkage
-    3: (255, 0, 0),    # class 3, red/stable tumor
-}
+class Visualizer:
+    def __init__(self, colors: dict, bg_color='black', fg_color='white'):
+        self.colors = colors
+        self.bg_color = bg_color
+        self.fg_color = fg_color
+        
+        # Set matplotlib parameters
+        mpl.rc('image', cmap='gray')
+        plt.rcParams["text.color"] = fg_color
+        plt.rcParams["axes.labelcolor"] = fg_color
+        plt.rcParams["xtick.color"] = fg_color
+        plt.rcParams["ytick.color"] = fg_color
+    
+    def to_pil(self, arr, to_rgb=False):
+        """Convert numpy array to PIL Image"""
+        normalized = ((arr - arr.min()) / (arr.max() - arr.min() + 1.e-8)) * 255.9
+        if to_rgb:
+            return Image.fromarray(normalized.astype(np.uint8)).convert('RGB')
+        return Image.fromarray(normalized.astype(np.uint8))
+    
+    def plot_uncertainty(self, arr, save_path, overlay=None):
+        """Plot uncertainty map with optional overlay"""
+        fig, ax = plt.subplots(figsize=(8, 8))
+        
+        cx = np.arange(arr.shape[1])
+        cy = np.arange(arr.shape[0])
+        X, Y = np.meshgrid(cx, cy)
+        
+        ax.set_aspect('equal')
+        col1 = ax.pcolormesh(X, Y, arr, cmap='magma', 
+                            vmin=arr.min(), vmax=arr.max())
+        
+        if overlay is not None:
+            ax.pcolormesh(X, Y, overlay, cmap='gray', alpha=0.35)
+        
+        ax.axis([cx.min(), cx.max(), cy.max(), cy.min()])
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="3%", pad=0.06)
+        cbar = fig.colorbar(col1, cax=cax, extend='max')
+        cbar.ax.tick_params(labelsize=18)
+        
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, facecolor=self.bg_color)
+        plt.close()
+    
+    def draw_contour(self, img, mask, rgb=(255, 0, 0)):
+        """Draw contour of mask on image"""
+        # Create binary mask
+        binary_mask = mask.point(lambda p: p >= 128 and 255)
+        
+        # Find edges
+        edges = binary_mask.filter(ImageFilter.FIND_EDGES)
+        edges_np = np.array(edges)
+        
+        # Convert image to RGBA if not already
+        if isinstance(img, np.ndarray):
+            img = Image.fromarray(img)
+        img = img.convert('RGBA')
+        img_np = np.array(img)
+        
+        # Draw edges in specified color
+        img_np[np.nonzero(edges_np)] = [*rgb, 255]
+        
+        return Image.fromarray(img_np)
+    
+    def overlay_maps(self, img, curr_mask, past_mask, transparency=0.4):
+        """Overlay current and past masks on image"""
+        img = img.convert('RGBA')
+        combined_mask = self.to_binary(np.array(curr_mask)) + 2 * self.to_binary(np.array(past_mask))
+        
+        overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+        overlay = np.array(overlay)
+        
+        for k, v in self.colors.items():
+            alpha = 0 if (k == 0 or k == 3) else transparency
+            overlay[combined_mask == k] = [*v, int(alpha * 255)]
+        
+        overlay = Image.fromarray(np.uint8(overlay))
+        return Image.alpha_composite(img, overlay)
+    
+    @staticmethod
+    def to_binary(arr, threshold=0.5):
+        """Convert array to binary mask"""
+        th = arr.max() * threshold
+        return (arr >= th).astype(np.uint8)
 
 def create_directory(path: str) -> None:
     """Create directory if it doesn't exist."""
     if not os.path.exists(path):
         os.makedirs(path)
 
-def plot_uncertainty_figure(
-    arr: np.ndarray,
-    save_path: str,
-    overlay: Optional[np.ndarray] = None,
-    figsize: Tuple[int, int] = (8, 8)
-) -> None:
-    """
-    Plot and save uncertainty figure.
-    
-    Args:
-        arr: Array containing uncertainty values
-        save_path: Path to save the figure
-        overlay: Optional overlay image
-        figsize: Figure size (width, height)
-    """
-    fig, ax = plt.subplots(figsize=figsize, sharex=False, sharey=False)
-    
-    cx = np.arange(arr.shape[1])
-    cy = np.arange(arr.shape[0])
-    X, Y = np.meshgrid(cx, cy)
-    
-    ax.set_aspect('equal')
-    col1 = ax.pcolormesh(X, Y, arr, cmap='magma',
-                        vmin=arr.min(), vmax=arr.max())
-                        
-    if overlay is not None:
-        ax.pcolormesh(X, Y, overlay, cmap='gray', alpha=0.35)
-    
-    ax.axis([cx.min(), cx.max(), cy.max(), cy.min()])
-    
-    # Add colorbar
-    divider1 = make_axes_locatable(ax)
-    cax1 = divider1.append_axes("right", size="3%", pad=0.06)
-    cbar = fig.colorbar(col1, cax=cax1, extend='max')
-    cbar.ax.tick_params(labelsize=18)
-    
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, facecolor='black')
-    plt.close()
-
-def draw_contour(
-    image: Image.Image,
-    mask: Image.Image,
-    threshold: int = 128,
-    color: Tuple[int, int, int] = (255, 255, 0)
-) -> Image.Image:
-    """
-    Draw contour of the mask on the image.
-    
-    Args:
-        image: Base image
-        mask: Binary mask
-        threshold: Threshold for mask binarization
-        color: RGB color for the contour
-        
-    Returns:
-        Image with drawn contour
-    """
-    # Convert mask to binary
-    binary_mask = mask.point(lambda p: p >= threshold and 255)
-    
-    # Find edges
-    edges = binary_mask.filter(ImageFilter.FIND_EDGES)
-    edges_array = np.array(edges)
-    
-    # Convert image to RGBA
-    result = np.array(image.convert('RGBA'))
-    
-    result[np.nonzero(edges_array)] = [x for x in list(color)] + [255]
-    
-    return Image.fromarray(result)
-
- 
-def to_binary(pred, threshold=0.5):
-    th = pred.max() * threshold
-    return (pred>=th).astype(np.uint8)
-
-def overlay_maps(
-    base_image: Image.Image,
-    current_mask: Image.Image,
-    past_mask: Image.Image,
-    transparency: float = 0.4
-) -> Image.Image:
-    """
-    Create overlay visualization of current and past masks.
-    
-    Args:
-        base_image: Base image to overlay on
-        current_mask: Current time point mask
-        past_mask: Previous time point mask
-        transparency: Transparency level for overlay
-        
-    Returns:
-        Image with overlay visualization
-    """
-    base_image = base_image.convert('RGBA')
-    
-    # Create combined state map
-    current_array = np.array(current_mask)
-    past_array = np.array(past_mask)
-    state_map = np.uint8(to_binary(current_array) + 2 * to_binary(past_array))
-    # (current_array > 0).astype(np.uint8) + 2 * (past_array > 0).astype(np.uint8)
-    
-    # Create overlay
-    overlay = Image.new('RGBA', base_image.size, (0, 0, 0, 0))
-    overlay_array = np.array(overlay)
-    
-    # Apply colors
-    for state, color in COLOR_MAP.items():
-        alpha = 0 if (state == 0 or state == 3) else transparency
-        overlay_array[state_map == state] = [x for x in list(color)]+ [int(alpha * 255)]
-    
-    overlay = Image.fromarray(overlay_array)
-    
-    return Image.alpha_composite(base_image, overlay)
-
-def save_visualization_results(
-    session_path: str,
-    file_prefix: str,
-    images: Dict[str, np.ndarray],
-    masks: Dict[str, np.ndarray]
-) -> None:
-    """
-    Save all visualization results for a session.
-    
-    Args:
-        session_path: Path to save session results
-        file_prefix: Prefix for saved files
-        images: Dictionary containing different image arrays 3, h, w
-        masks: Dictionary containing different mask arrays  4, h, w
-    """
-    create_directory(session_path)
-    
-    # Save ground truth and predicted masks
-    for mask_name, masks_4session in masks.items():
-        for j in range(4):
-            mask_data = masks_4session[j, :, :].astype(float)
-            mask_image = to_pil(mask_data)
-            mask_image.save(os.path.join(session_path, f"{file_prefix}-mask-sess{j}-{mask_name}.png"))
-        
-    # Save images with overlays and contours
-    for img_name, img_3modal in images.items():
-        # print(f'image: {img_name}, img_3modal.shape: {img_3modal.shape}')
-        for i in range(3):  # For each modality
-            img_data = img_3modal[i, :, :].astype(float)
-            base_image = to_pil(img_data)
-            
-            # Save original image
-            base_image.save(os.path.join(session_path, f"{file_prefix}-image-modal{i}-{img_name}.png"))
-        
-        # Create and save overlay
-        if 'ref_mask' in masks and 'pred_mask' in masks:
-            overlay_image = overlay_maps(base_image, to_pil(masks['pred_mask'][3]), to_pil(masks['ref_mask'][2]))
-            overlay_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_overlay.png"))
-        
-        # Create and save contour
-        if 'gt_mask' in masks:
-            contour_image = draw_contour(base_image, to_pil(masks['gt_mask'][3]))
-            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour_gt.png"))
-        if 'pred_mask' in masks:
-            contour_image = draw_contour(base_image, to_pil(masks['pred_mask'][3]))
-            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour_pred.png"))

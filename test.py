@@ -32,20 +32,24 @@ import torch
 import numpy as np
 import pandas as pd
 from typing import Dict, List
+from pathlib import Path
 
+from config.test_config import TestConfig
 from src.tadiff_model import Tadiff_model
 from src.net.diffusion import GaussianDiffusion
-from src.data.data_loader import load_data
+from src.data.data_loader import load_data, val_transforms
 from src.visualization.visualizer import (
-    plot_uncertainty_figure,
-    save_visualization_results,
-    create_directory
+    # plot_uncertainty_figure,
+    # save_visualization_results,
+    create_directory,
+    Visualizer
 )
 from src.evaluation.metrics import (
-    setup_metrics,
-    calculate_metrics,
+    # setup_metrics,
+    # calculate_metrics,
     calculate_tumor_volumes,
-    get_slice_indices
+    get_slice_indices,
+    MetricsCalculator
 )
 from src.utils.image_processing import (
     # normalize_to_255,
@@ -54,6 +58,7 @@ from src.utils.image_processing import (
     create_noise_tensor,
     extract_slice
 )
+from monai.data import CacheDataset, DataLoader
 
 def process_session(
     patient_id: str,
@@ -200,13 +205,21 @@ def process_slice(
         Dict[str, Dict]: Dictionary containing:
             - Keys: Sample identifiers (f"sample_{n}" or "ensemble")
             - Values: Dictionary of metric scores
-            
-    Outputs:
-        - Visualizations saved to {session_path}/
-        - Console output of processing status
     """
+    # Move input tensors to device
+    images = images.to(device)
+    labels = labels.to(device)
+    days = days.to(device)
+    treatments = treatments.to(device)
+    
     # Prepare data
-    slice_indices = [slice_idx] * num_samples
+    b, cs, h, w, z = images.shape
+    # Reshape images to separate modalities and sessions
+    images = images.view(b, 4, -1, h, w, z)  # t1, t1c, flair, t2
+    images = images.permute(0, 2, 1, 3, 4, 5)  # b, s, c, h, w, z
+    images = images[:, :, :-1, :, :, :]  # remove T2 modal, b, s, c-1, h, w, z
+    
+    # Get target session indices
     session_indices = np.array([
         session_idx - 3,
         session_idx - 2,
@@ -215,38 +228,38 @@ def process_slice(
     ])
     session_indices[session_indices < 0] = 0
     session_indices = list(session_indices)
+    
     # Extract relevant slices
     masks = labels[0, session_indices, :, :, :]
-    masks = masks[:, :, :, slice_indices].permute(3, 0, 1, 2)
+    masks = masks[:, :, :, [slice_idx]*num_samples].permute(3, 0, 1, 2)
     seq_imgs = images[0, session_indices, :, :, :, :]
-    seq_imgs = seq_imgs[:, :, :, :, slice_indices].permute(4, 0, 1, 2, 3)
+    seq_imgs = seq_imgs[:, :, :, :, [slice_idx]*num_samples].permute(4, 0, 1, 2, 3)
     
     # Create noise and prepare target images
-    noise = create_noise_tensor(num_samples, 3, images.shape[3], images.shape[4], device)
+    noise = torch.randn((num_samples, 3, h, w), device=device)
     x_t = seq_imgs.clone()
     x_0 = []
     
     # Set up target indices
-    i_tg = target_idx * torch.ones((len(slice_indices),), dtype=torch.int8).to(device)
+    i_tg = target_idx * torch.ones((num_samples,), dtype=torch.int8, device=device)
     
     # Prepare input tensors
     for i, j in zip(range(num_samples), i_tg):
         x_0.append(seq_imgs[[i], j, :, :, :])
         x_t[i, j, :, :, :] = noise[i, :, :, :]
     x_0 = torch.cat(x_0, dim=0)
-    x_t = x_t.reshape(num_samples, len(session_indices) * 3, images.shape[3], images.shape[4])
-    print(f'x_0.shape: {x_0.shape}, x_t.shape: {x_t.shape}')
+    x_t = x_t.reshape(num_samples, len(session_indices) * 3, h, w)
+    
     # Prepare condition tensors
-    daysq = days[0, session_indices].repeat(num_samples, 1)
-    treatments_q = treatments[0, session_indices].repeat(num_samples, 1)
+    daysq = days[0, session_indices].repeat(num_samples, 1).to(device)
+    treatments_q = treatments[0, session_indices].repeat(num_samples, 1).to(device)
     
     # Run diffusion
     diffusion = GaussianDiffusion(T=diffusion_steps, 
-                                  schedule="linear", # ,#"cosine", # 
-                                  )
-    # pred_img, seg_seq = diffusion.TaDiff_inverse(
-    pred_img, seg_seq = diffusion.ddim_inverse(
-    # pred_img, seg_seq = diffusion.dpm_solver_plus_plus_inverse(
+                                schedule="linear",
+                                device=device
+                                )
+    pred_img, seg_seq = diffusion.TaDiff_inverse(
         net=model,
         start_t=diffusion_steps,
         steps=diffusion_steps,
@@ -256,22 +269,14 @@ def process_slice(
         i_tg=i_tg,
         device=device
     )
-    # pred_img, seg_seq = diffusion.unified_inverse_process(
-    #     net=model,
-    #     steps=diffusion_steps,
-    #     x=x_t,
-    #     intv=[daysq[:, i].to(torch.float32) for i in range(4)],
-    #     treat_cond=[treatments_q[:, i].to(torch.float32) for i in range(4)],
-    #     i_tg=i_tg,
-    # )
     
     # Process predictions
     seg_seq = torch.sigmoid(seg_seq)
     predictions = {
-        'images': pred_img, # (samples, C, H, W)  # C = 3 modality 
-        'masks': seg_seq, # (samples, 4, H, W)
-        'ground_truth': x_0, # (samples, C, H, W)
-        'target_masks': masks # (samples, 4, H, W)
+        'images': pred_img,  # (samples, C, H, W)  # C = 3 modality 
+        'masks': seg_seq,  # (samples, 4, H, W)
+        'ground_truth': x_0,  # (samples, C, H, W)
+        'target_masks': masks  # (samples, 4, H, W)
     }
     
     # Calculate metrics and save visualizations
@@ -322,158 +327,323 @@ def evaluate_predictions(
     scores = {}
     
     # Calculate average predictions
-    avg_img = torch.mean(predictions['images'], 0) # (3, H, W)  # 3 modality
-    # avg_mask = torch.mean(predictions['masks'], 0)[0]
+    avg_img = torch.mean(predictions['images'], 0)  # (3, H, W)
     avg_mask_pred = torch.sigmoid(predictions['masks'])
-    avg_mask_pred = torch.mean(avg_mask_pred, 0) # (4, H, W)
-    # predictions = {
-    #     'images': pred_img, # (samples, C, H, W)  # C = 3 modality 
-    #     'masks': seg_seq, # (samples, 4, H, W)
-    #     'ground_truth': x_0, # (samples, C, H, W)
-    #     'target_masks': masks # (samples, 4, H, W)
-    # }
-    # Save visualization results
+    avg_mask_pred = torch.mean(avg_mask_pred, 0)    # (4, H, W)
     
-    save_visualization_results(
-        session_path=session_path,
-        file_prefix=f'target-sess-{session_idx:02d}-slice-{slice_idx:03d}',
-        images={
-            'prediction': avg_img.cpu().numpy(),
-            'ground_truth': predictions['ground_truth'][0].cpu().numpy()
-        },
-        masks={
-            'pred_mask': avg_mask_pred.cpu().numpy(),
-            'gt_mask': predictions['target_masks'][0].cpu().numpy(),
-            'ref_mask': predictions['target_masks'][0].cpu().numpy(),
-        }
-    )
+    # Calculate uncertainty maps
+    img_std = torch.std(predictions['images'], 0)  # (3, H, W) - t1,t1c,flair 
+    seg_seq_std = torch.std(predictions['masks'], 0)  # (4, H, W) - uncertainty in sequence
+    
+    # Prepare visualization data
+    images = {
+        'prediction': predictions['images'][0].cpu().numpy(),  # Use first sample for visualization
+        'ground_truth': predictions['ground_truth'][0].cpu().numpy()
+    }
+    masks = {
+        'prediction': avg_mask_pred.cpu().numpy().astype(np.float32),  # Convert to float32
+        'ground_truth': predictions['target_masks'][0].cpu().numpy().astype(np.float32),  # Convert to float32
+        'uncertainty': img_std.cpu().numpy().astype(np.float32),  # Add uncertainty map
+        'sequence_uncertainty': seg_seq_std.cpu().numpy().astype(np.float32)  # Add sequence uncertainty
+    }
+    
+    # Create visualizer with default colors
+    visualizer = Visualizer({
+        0: (0, 0, 0),       # background
+        1: (255, 0, 0),     # red
+        2: (0, 255, 0),     # green  
+        3: (0, 0, 255),     # blue
+        4: (255, 255, 0)    # yellow for ensemble
+    })
+
+    modal_names = ['t1', 't1c', 'flair']
+    
+    try:
+        # Ensure directory exists
+        create_directory(session_path)
+        
+        # Create file prefix
+        file_prefix = f'ses-{session_idx:02d}_slice-{slice_idx:03d}'
+        
+        # Convert masks to PIL images
+        pred_mask_pil = visualizer.to_pil(masks['prediction'][-1, :, :])
+        gt_mask_pil = visualizer.to_pil(masks['ground_truth'][-1, :, :])
+        
+        # Save masks
+        pred_mask_pil.save(os.path.join(session_path, f"{file_prefix}-pred-mask.png"))
+        gt_mask_pil.save(os.path.join(session_path, f"{file_prefix}-gt-mask.png"))
+        
+        # Save uncertainty maps
+        visualizer.plot_uncertainty(masks['uncertainty'][0, :, :], 
+                                    os.path.join(session_path, f"{file_prefix}-t1_uncertainty.png"), 
+                                    overlay=avg_img[0, :, :].cpu().numpy())
+        visualizer.plot_uncertainty(masks['uncertainty'][1, :, :], 
+                                    os.path.join(session_path, f"{file_prefix}-t1c_uncertainty.png"),
+                                    overlay=avg_img[1, :, :].cpu().numpy())
+        visualizer.plot_uncertainty(masks['uncertainty'][2, :, :], 
+                                    os.path.join(session_path, f"{file_prefix}-flair_uncertainty.png"),
+                                    overlay=avg_img[2, :, :].cpu().numpy())
+        
+        visualizer.plot_uncertainty(masks['sequence_uncertainty'][0, :, :], 
+                                    os.path.join(session_path, f"{file_prefix}-mask-uncertainty.png"),
+                                    overlay=avg_img[2, :, :].cpu().numpy())
+        # uncertainty_pil = visualizer.to_pil(masks['uncertainty'][-1, :, :])
+        # seq_uncertainty_pil = visualizer.to_pil(masks['sequence_uncertainty'][-1, :, :])
+        # uncertainty_pil.save(os.path.join(session_path, f"{file_prefix}-uncertainty.png"))
+        # seq_uncertainty_pil.save(os.path.join(session_path, f"{file_prefix}-sequence-uncertainty.png"))
+        
+        # Save images with overlays and contours for each modality
+        for j in range(3):  # For each modality
+            pred_img = visualizer.to_pil(images['prediction'][j])
+            gt_img = visualizer.to_pil(images['ground_truth'][j])
+            
+            # Save original images
+            pred_img.save(os.path.join(session_path, f"{file_prefix}-pred-{modal_names[j]}.png"))
+            gt_img.save(os.path.join(session_path, f"{file_prefix}-gt-{modal_names[j]}.png"))
+            
+            # Save overlays
+            # pred_overlay = visualizer.overlay_maps(pred_img, pred_mask_pil, gt_mask_pil)
+            # pred_overlay.save(os.path.join(session_path, f"{file_prefix}-pred-{modal_names[j]}_overlay.png"))
+            
+            # Save contours
+            pred_contour = visualizer.draw_contour(pred_img, pred_mask_pil)
+            pred_contour.save(os.path.join(session_path, f"{file_prefix}-pred-{modal_names[j]}_contour.png"))
+            
+            
+    except Exception as e:
+        print(f"Error saving visualization results: {e}")
+        raise
     
     # Calculate metrics for each sample
     for i in range(len(predictions['images'])):
-        sample_metrics = calculate_metrics(
-            metrics=metrics,
-            prediction=predictions['images'][i].unsqueeze(0),
-            ground_truth=predictions['ground_truth'][i].unsqueeze(0)
+        sample_metrics = metrics.calculate_metrics(
+            pred_img=predictions['images'][i].unsqueeze(0),
+            gt_img=predictions['ground_truth'][i].unsqueeze(0),
+            pred_mask=predictions['masks'][i].unsqueeze(0),
+            gt_mask=predictions['target_masks'][i].unsqueeze(0)
         )
         scores[f'sample_{i}'] = sample_metrics
     
     # Calculate metrics for ensemble prediction
-    ensemble_metrics = calculate_metrics(
-        metrics=metrics,
-        prediction=avg_img.unsqueeze(0),
-        ground_truth=predictions['ground_truth'][0].unsqueeze(0)
+    ensemble_metrics = metrics.calculate_metrics(
+        pred_img=avg_img.unsqueeze(0),
+        gt_img=predictions['ground_truth'][0].unsqueeze(0),
+        pred_mask=avg_mask_pred.unsqueeze(0),
+        gt_mask=predictions['target_masks'][0].unsqueeze(0)
     )
     scores['ensemble'] = ensemble_metrics
-    print(scores)
+    
+    print(f"Session {session_idx}, Slice {slice_idx} evaluation complete")
     return scores
 
-def get_test_files(data_root: str = "./data/lumiere",
-                   patient_ids: Optional[List[str]] = None,
-                   prefix: str = '') -> List[Dict[str, str]]:
-    """
-    Retrieve test data file paths for specified patients.
-    
-    Args:
-        data_root: Root directory containing .npy files (str)
-        patient_ids: List of patient IDs to process (List[str]).
-                    If None, defaults to ['042']
-        prefix: Optional filename prefix (str)
-        
-    Returns:
-        List[Dict[str, str]]: List of dictionaries with keys:
-            - 'image': Path to image .npy file
-            - 'label': Path to label .npy file
-            - 'days': Path to days .npy file
-            - 'treatment': Path to treatment .npy file
-            
-    Raises:
-        FileNotFoundError: If required .npy files are missing
-    """
-    # if patient_ids is None:
-    #     patient_ids = ['042']
-        
-    npz_keys = ['image', 'label', 'days', 'treatment']
+def get_test_files(config: TestConfig):
+    """Get list of test files for each patient"""
     test_files = []
-    
-    for patient_id in patient_ids:
-        file_dict = {}
-        for key in npz_keys:
-            file_dict[key] = os.path.join(data_root, f'{prefix}{patient_id}_{key}.npy')
+    for patient_id in config.patient_ids:
+        file_dict = {
+            key: os.path.join(config.data_root, f'{patient_id}_{key}.npy')
+            for key in config.npz_keys
+        }
         test_files.append(file_dict)
-        
     return test_files
 
-def main():
-    """
-    Main execution function for TaDiff model testing.
-    
-    Workflow:
-    1. Load model checkpoint
-    2. Configure evaluation parameters
-    3. Load and process test data
-    4. Generate and evaluate predictions
-    5. Save metrics and visualizations
-    
-    Configuration:
-    - Device: Automatically uses CUDA if available
-    - Checkpoint: Loads from ./ckpt/
-    - Diffusion: 50 steps by default
-    - Samples: 4 predictions per slice
-    - Output: Saves to ./paper_sailor_eval_p17_ddim_step50/
-    
-    To modify behavior, edit the constants at the start of the function.
-    """
-    # Configuration
-    DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    CHECKPOINT_PATH = "./ckpt/s2_w_val_loss=0.00646-val_mse=0.0028-val_dice=0.811.ckpt"
-    
-    DIFFUSION_STEPS = 50
-    NUM_SAMPLES = 4
-    
-    # Setup model and metrics
-    model = Tadiff_model.load_from_checkpoint(CHECKPOINT_PATH, strict=False)
+def load_data(test_files, config: TestConfig):
+    """Load and prepare test data"""
+    test_dataset = CacheDataset(data=test_files, transform=val_transforms)
+    return DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+def setup_model(config: TestConfig, device: str):
+    """Initialize and load model"""
+    model = Tadiff_model.load_from_checkpoint(
+        config.model_checkpoint,
+        model_channels=config.model_channels,
+        num_heads=config.num_heads,
+        num_res_blocks=config.num_res_blocks,
+        strict=False
+    )
+    model.to(device)
     model.eval()
-    model.to(DEVICE)
+    return model
+
+def process_slice_old(model, data, slice_idx, config: TestConfig, device: str):
+    """Process a single slice through the model"""
+    # Prepare input data
+    labels = data['label'].to(device)
+    imgs = data['image'].to(device)
+    days = data['days'].to(device)
+    treats = data['treatment'].to(device)
     
-    metrics = setup_metrics(DEVICE)
+    # Reshape and prepare data
+    b, cs, h, w, z = imgs.shape
+    imgs = imgs.view(b, 4, -1, h, w, z)
+    imgs = imgs.permute(0, 2, 1, 3, 4, 5)
+    imgs = imgs[:, :, :-1, :, :, :]  # Remove T2 modal
+    
+    # Get target session indices
+    target_sess = config.target_session_idx
+    Sf = np.array([target_sess-3, target_sess-2, target_sess-1, target_sess])
+    Sf[Sf < 0] = 0
+    Sf = list(Sf)
+    
+    # Prepare model inputs
+    print(f'labels.shape: {labels.shape}, Sf: {Sf}, slice_idx: {slice_idx}')
+    masks = labels[0, Sf, :, :, :]
+    masks = masks[:, :, :, [slice_idx]*config.num_samples].permute(3, 0, 1, 2)
+    seq_imgs = imgs[0, Sf, :, :, :, :]
+    seq_imgs = seq_imgs[:, :, :, :, [slice_idx]*config.num_samples].permute(4, 0, 1, 2, 3)
+    x_t = seq_imgs.clone()
+    x_0 = []
+    noise = torch.randn((config.num_samples, 3, h, w))
+    for i, j in zip(range(config.num_samples), config.target_session_idx * torch.ones((config.num_samples,), dtype=torch.int8).to(device)):
+        x_0.append(seq_imgs[[i], j, :, :, :])
+        x_t[i, j, :, :, :] = noise[i, :, :, :]
+    x_0 = torch.cat(x_0, dim=0)
+    x_t = x_t.reshape(config.num_samples, len(Sf)*3, h, w)
+    day_sq = days[0, Sf].repeat(config.num_samples, 1)
+    treat_sq = treats[0, Sf].repeat(config.num_samples, 1)
+    # Generate predictions
+    diffusion = GaussianDiffusion(T=config.diffusion_steps, schedule='linear', device=device)
+    pred_img, seg_seq = diffusion.TaDiff_inverse(
+        model,
+        start_t=config.diffusion_steps//1.5,
+        steps=config.diffusion_steps//1.5,
+        x=x_t.to(device),
+        intv=[day_sq[:, i].to(device) for i in range(4)],
+        treat_cond=[treat_sq[:, i].to(device) for i in range(4)],
+        i_tg=config.target_session_idx * torch.ones((config.num_samples,), dtype=torch.int8).to(device),
+        device=device
+    )
+    
+    return pred_img, seg_seq, masks, x_0 #seq_imgs
+
+def save_visualization_results(
+    session_path: str,
+    file_prefix: str,
+    images: Dict[str, np.ndarray],
+    masks: Dict[str, np.ndarray],
+    COLOR_MAP: Dict[str, str]
+) -> None:
+    """
+    Save all visualization results for a session.
+    
+    Args:
+        session_path: Path to save session results
+        file_prefix: Prefix for saved files
+        images: Dictionary containing different image arrays 3, h, w
+        masks: Dictionary containing different mask arrays  4, h, w
+    """
+    create_directory(session_path)
+    
+    # Save ground truth and predicted masks
+    for mask_name, masks_4session in masks.items():
+        for j in range(4):
+            mask_data = masks_4session[j, :, :].astype(float)
+            mask_image = Visualizer(COLOR_MAP).to_pil(mask_data)
+            mask_image.save(os.path.join(session_path, f"{file_prefix}-mask-sess{j}-{mask_name}.png"))
+        
+    # Save images with overlays and contours
+    for img_name, img_3modal in images.items():
+        # print(f'image: {img_name}, img_3modal.shape: {img_3modal.shape}')
+        for i in range(3):  # For each modality
+            img_data = img_3modal[i, :, :].astype(float)
+            base_image = Visualizer(COLOR_MAP).to_pil(img_data)
+            
+            # Save original image
+            base_image.save(os.path.join(session_path, f"{file_prefix}-image-modal{i}-{img_name}.png"))
+        
+        # Create and save overlay
+        if 'ref_mask' in masks and 'pred_mask' in masks:
+            overlay_image = Visualizer(COLOR_MAP).overlay_maps(base_image, Visualizer(COLOR_MAP).to_pil(masks['pred_mask'][3]), Visualizer(COLOR_MAP).to_pil(masks['ref_mask'][2]))
+            overlay_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_overlay.png"))
+        
+        # Create and save contour
+        if 'gt_mask' in masks:
+            contour_image = Visualizer(COLOR_MAP).draw_contour(base_image, Visualizer(COLOR_MAP).to_pil(masks['gt_mask'][3]))
+            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour_gt.png"))
+        if 'pred_mask' in masks:
+            contour_image = Visualizer(COLOR_MAP).draw_contour(base_image, Visualizer(COLOR_MAP).to_pil(masks['pred_mask'][3]))
+            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour_pred.png"))
+
+
+def main():
+    # Load configuration
+    config = TestConfig()
+    if torch.cuda.is_available():
+        device = "cuda:0"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
+    
+    # Initialize components
+    model = setup_model(config, device)
+    metrics_calculator = MetricsCalculator(device, config.dice_thresholds)
+    visualizer = Visualizer(config.colors)
     
     # Load data
-    # patient_ids = ['042']
-    patient_ids = ['17']
-    test_files = get_test_files(data_root="./data/sailor", patient_ids=patient_ids,
-                                prefix='sub-')
-    dataloader = load_data(test_files)
-    SAVE_PATH = './paper_sailor_eval_p17_ddim_step50'
+    test_files = get_test_files(config)
+    dataloader = load_data(test_files, config)
     
-    # Process all data
-    all_scores = {}
-    for batch_idx, batch in enumerate(dataloader):
-        print(f"Processing batch {batch_idx}")
+    # Create output directory
+    os.makedirs(config.save_path, exist_ok=True)
+    
+    # Create or load CSV file
+    csv_path = os.path.join(config.save_path, 'test_scores.csv')
+    if os.path.exists(csv_path):
+        all_scores = pd.read_csv(csv_path, index_col=0).to_dict('index')
+    else:
+        all_scores = {}
+    
+    # Process each patient
+    for i, batch in enumerate(dataloader):
+        patient_id = config.patient_ids[i]
+        print(f'Processing patient {patient_id}')
         
         # Process each session
-        for target_session_idx in range(batch['label'].shape[1]):
-            if target_session_idx > 0: 
-                session_scores = process_session(
-                    patient_id=patient_ids[batch_idx],
-                    session_idx=target_session_idx,
-                    batch=batch,
+        for session_idx in range(batch['label'].shape[1]):
+            # Process each slice
+            for slice_idx in range(batch['label'].shape[-1]):
+                # Skip slices with small tumor size
+                if torch.sum(batch['label'][0, :, :, :, slice_idx]) < config.min_tumor_size:
+                    continue
+                
+                # Get predictions using the first process_slice()
+                slice_scores = process_slice(
+                    slice_idx=slice_idx,
+                    session_idx=session_idx,
+                    images=batch['image'],
+                    labels=batch['label'],
+                    days=batch['days'],
+                    treatments=batch['treatment'],
                     model=model,
-                    device=DEVICE,
-                    metrics=metrics,
-                    save_path=SAVE_PATH,
-                    diffusion_steps=DIFFUSION_STEPS,
-                    num_samples=NUM_SAMPLES
+                    device=device,
+                    metrics=metrics_calculator,
+                    session_path=os.path.join(config.save_path, f'p-{patient_id}', f'slice-{slice_idx:03d}'),
+                    diffusion_steps=config.diffusion_steps,
+                    num_samples=config.num_samples,
+                    target_idx=config.target_session_idx
                 )
-                all_scores.update(session_scores)
-            else:
-                continue
+                
+                # Flatten the nested dictionary structure
+                flattened_scores = {}
+                for sample_key, sample_metrics in slice_scores.items():
+                    for metric_name, metric_value in sample_metrics.items():
+                        flattened_scores[f"{sample_key}_{metric_name}"] = metric_value
+                
+                # Add metadata
+                flattened_scores['patient_id'] = patient_id
+                flattened_scores['session_idx'] = session_idx
+                flattened_scores['slice_idx'] = slice_idx
+                
+                # Save metrics immediately
+                score_key = f'{patient_id}_slice_{slice_idx:03d}'
+                all_scores[score_key] = flattened_scores
+                
+                # Save to CSV after each slice
+                pd.DataFrame.from_dict(all_scores, orient='index').to_csv(csv_path)
+                print(f"Saved scores for {score_key}")
     
-    # Save results
-    results_file = f'test-score_diffusionsteps-{DIFFUSION_STEPS}_samples-{NUM_SAMPLES}.csv'
-    pd.DataFrame.from_dict(all_scores, orient='index').to_csv(
-        os.path.join(SAVE_PATH, results_file),
-        float_format='%.3f'
-    )
+    print("All processing complete. Final scores saved to:", csv_path)
 
 if __name__ == '__main__':
     main()

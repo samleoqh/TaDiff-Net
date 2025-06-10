@@ -67,11 +67,11 @@ class GaussianDiffusion():
         x0 = x[:, 9:12, :, :]
         
         # Initialize output tensor for mask
-        y = torch.zeros_like(x[:, 0:4, :, :])
+        y = torch.zeros_like(x[:, 0:4, :, :]).to(device)
         
         # Calculate weights for mask averaging
         T_m = step_mask if step_mask < steps else steps
-        w_p = self.alphabar[:T_m]/torch.sum(self.alphabar[:T_m])
+        w_p = (self.alphabar[:T_m]/torch.sum(self.alphabar[:T_m])).to(device)
         
         # Inverse diffusion loop
         for t in range(start_t, start_t-steps, -1):

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from src.net.tadiff_unet_arch import TaDiff_Net
-import wandb # logging metrics
+# import wandb # logging metrics
 
 from pytorch_lightning import LightningModule, Callback
 from torch.optim import AdamW, SGD
