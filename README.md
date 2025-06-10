@@ -30,7 +30,7 @@ TaDiff-Net/
 ├── ckpt/                   # Model checkpoints
 ├── data/                   # Data directory
 ├── test.py                 # Testing script
-├── infer.py               # Inference script
+├── inference.py               # Inference script
 └── README.md              # This file
 ```
 
