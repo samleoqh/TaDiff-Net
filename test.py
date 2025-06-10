@@ -375,17 +375,17 @@ def evaluate_predictions(
         
         # Save uncertainty maps
         visualizer.plot_uncertainty(masks['uncertainty'][0, :, :], 
-                                    os.path.join(session_path, f"{file_prefix}-t1_uncertainty.png"), 
+                                    os.path.join(session_path, f"{file_prefix}-uncertainty_t1.png"), 
                                     overlay=avg_img[0, :, :].cpu().numpy())
         visualizer.plot_uncertainty(masks['uncertainty'][1, :, :], 
-                                    os.path.join(session_path, f"{file_prefix}-t1c_uncertainty.png"),
+                                    os.path.join(session_path, f"{file_prefix}-uncertainty_t1c.png"),
                                     overlay=avg_img[1, :, :].cpu().numpy())
         visualizer.plot_uncertainty(masks['uncertainty'][2, :, :], 
-                                    os.path.join(session_path, f"{file_prefix}-flair_uncertainty.png"),
+                                    os.path.join(session_path, f"{file_prefix}-uncertainty_flair.png"),
                                     overlay=avg_img[2, :, :].cpu().numpy())
         
         visualizer.plot_uncertainty(masks['sequence_uncertainty'][0, :, :], 
-                                    os.path.join(session_path, f"{file_prefix}-mask-uncertainty.png"),
+                                    os.path.join(session_path, f"{file_prefix}-uncertainty_mask.png"),
                                     overlay=avg_img[2, :, :].cpu().numpy())
         # uncertainty_pil = visualizer.to_pil(masks['uncertainty'][-1, :, :])
         # seq_uncertainty_pil = visualizer.to_pil(masks['sequence_uncertainty'][-1, :, :])
