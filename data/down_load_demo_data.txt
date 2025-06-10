@@ -1,0 +1,2 @@
+Download the sailor demo data from the link https://e.pcloud.link/publink/show?code=XZYVqtZp3JI7r9S05Qtm68MFOmkyVaGrdUV
+Put it into data/sailor/
