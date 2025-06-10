@@ -93,17 +93,17 @@ Output will be saved in the configured save path with:
 To generate predictions without ground truth:
 
 ```bash
-python inference.py
+python inference.py --input_day 20 --input_treatment 1
 ```
 
 This will:
 1. Load the model and input data
-2. Generate predictions for each patient and slice
-3. Save ensemble predictions and uncertainty maps
+2. Generate predictions for target patient and slice
+3. Save ensemble predictions and plot uncertainty maps
 
-Output structure:
+Test Output structure:
 ```
-save_path/
+test_results/
 ├── p-{patient_id}/
 │   ├── slice-000/
 │   │   ├── pred_{t1,t1c,flair}.png    # Average predictions (generated 3 modal MRI slices)
@@ -112,6 +112,18 @@ save_path/
 │   │   ├── uncertainty_mask.png     # target tumor mask uncertainty
 │   └── slice-001/
 │       └── ...
+├── test_scores.csv
+```
+
+Inference Output structure:
+```
+inference_results/
+├── p-{}/ses-{}/day-{}/treatment-{0/1}/
+│   ├── ses-{}-slice-{}_pred_{t1,t1c,flair}.png    # Average predictions (generated 3 modal MRI slices)
+│   ├── ses-{}-slice-{}_pred_mask.png              # predicted target tumor segmentation mask
+│   ├── ses-{}-slice-{}_uncertainty_{t1,t1c,flair}.png # predictied 3 modal image uncertainty
+│   ├── ses-{}-slice-{}_uncertainty_mask.png       # target tumor mask uncertainty
+│   └── ...
 ```
 
 ## Model Details
@@ -144,8 +156,6 @@ The visualization module provides:
 ## Citation
 
 If you find this code helps in your work, please cite:
-
-If you find this code helps in your work, please cite:
 ```
 @ARTICLE{10851394,
   author={Liu, Qinghui and Fuster-Garcia, Elies and Thokle Hovden, Ivar and MacIntosh, Bradley J. and Grødem, Edvard O. S. and Brandal, Petter and Lopez-Mateu, Carles and Sederevičius, Donatas and Skogen, Karoline and Schellhorn, Till and Bjørnerud, Atle and Eeg Emblem, Kyrre},
@@ -155,11 +165,5 @@ If you find this code helps in your work, please cite:
   volume={44},
   number={6},
   pages={2449-2462},
-  keywords={Tumors;Magnetic resonance imaging;Predictive models;Brain modeling;Uncertainty;Data models;Probabilistic logic;Diffusion processes;Diffusion models;Computational modeling;Diffuse glioma;longitudinal MRI;diffusion probabilistic model;tumor growth prediction;deep learning},
-  doi={10.1109/TMI.2025.3533038}}
-  volume={44},
-  number={6},
-  pages={2449-2462},
-  keywords={Tumors;Magnetic resonance imaging;Predictive models;Brain modeling;Uncertainty;Data models;Probabilistic logic;Diffusion processes;Diffusion models;Computational modeling;Diffuse glioma;longitudinal MRI;diffusion probabilistic model;tumor growth prediction;deep learning},
   doi={10.1109/TMI.2025.3533038}}
 ```
