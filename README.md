@@ -94,25 +94,26 @@ Output will be saved in the configured save path with:
 To generate predictions without ground truth:
 
 ```bash
-python infer.py
+python inference.py --input_day 20 --input_treatment 1
 ```
 
 This will:
 1. Load the model and input data
-2. Generate predictions for each patient and slice
-3. Save ensemble predictions and uncertainty maps
+2. Generate predictions for input patient and target slice
+3. Save ensemble predictions and plot uncertainty maps
 
 Output structure:
 ```
 save_path/
-├── p-{patient_id}/
-│   ├── slice-000/
-│   │   ├── pred_{t1,t1c,flair}.png    # Average predictions (generated 3 modal MRI slices)
-│   │   ├── pred_mask.png            # predicted target tumor segmentation mask
-│   │   ├── uncertainty_{t1,t1c,flair}.png # predictied 3 modal image uncertainty
-│   │   ├── uncertainty_mask.png     # target tumor mask uncertainty
-│   └── slice-001/
-│       └── ...
+├── p-{patient_id}/ses-{target_sess}/day-{target_day}
+│   ├── treatment-{0/1}/
+│   │   ├── prediction-slice-{}.npy
+│   │   ├── segmentation-slice-{}.npy
+│   │   ├── ses-{}-slice-{}-pred_{t1,t1c,flair}.png    # Average predictions (generated 3 modal MRI slices)
+│   │   ├── ses-{}-slice-{}-pred_mask.png            # predicted target tumor segmentation mask
+│   │   ├── ses-{}-slice-{}-uncertainty_{t1,t1c,flair}.png # predictied 3 modal image uncertainty
+│   │   ├── ses-{}-slice-{}-uncertainty_mask.png     # target tumor mask uncertainty
+│   
 ```
 
 ## Model Details
