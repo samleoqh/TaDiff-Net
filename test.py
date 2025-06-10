@@ -516,54 +516,6 @@ def process_slice_old(model, data, slice_idx, config: TestConfig, device: str):
     
     return pred_img, seg_seq, masks, x_0 #seq_imgs
 
-def save_visualization_results(
-    session_path: str,
-    file_prefix: str,
-    images: Dict[str, np.ndarray],
-    masks: Dict[str, np.ndarray],
-    COLOR_MAP: Dict[str, str]
-) -> None:
-    """
-    Save all visualization results for a session.
-    
-    Args:
-        session_path: Path to save session results
-        file_prefix: Prefix for saved files
-        images: Dictionary containing different image arrays 3, h, w
-        masks: Dictionary containing different mask arrays  4, h, w
-    """
-    create_directory(session_path)
-    
-    # Save ground truth and predicted masks
-    for mask_name, masks_4session in masks.items():
-        for j in range(4):
-            mask_data = masks_4session[j, :, :].astype(float)
-            mask_image = Visualizer(COLOR_MAP).to_pil(mask_data)
-            mask_image.save(os.path.join(session_path, f"{file_prefix}-mask-sess{j}-{mask_name}.png"))
-        
-    # Save images with overlays and contours
-    for img_name, img_3modal in images.items():
-        # print(f'image: {img_name}, img_3modal.shape: {img_3modal.shape}')
-        for i in range(3):  # For each modality
-            img_data = img_3modal[i, :, :].astype(float)
-            base_image = Visualizer(COLOR_MAP).to_pil(img_data)
-            
-            # Save original image
-            base_image.save(os.path.join(session_path, f"{file_prefix}-image-modal{i}-{img_name}.png"))
-        
-        # Create and save overlay
-        if 'ref_mask' in masks and 'pred_mask' in masks:
-            overlay_image = Visualizer(COLOR_MAP).overlay_maps(base_image, Visualizer(COLOR_MAP).to_pil(masks['pred_mask'][3]), Visualizer(COLOR_MAP).to_pil(masks['ref_mask'][2]))
-            overlay_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_overlay.png"))
-        
-        # Create and save contour
-        if 'gt_mask' in masks:
-            contour_image = Visualizer(COLOR_MAP).draw_contour(base_image, Visualizer(COLOR_MAP).to_pil(masks['gt_mask'][3]))
-            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour_gt.png"))
-        if 'pred_mask' in masks:
-            contour_image = Visualizer(COLOR_MAP).draw_contour(base_image, Visualizer(COLOR_MAP).to_pil(masks['pred_mask'][3]))
-            contour_image.save(os.path.join(session_path, f"{file_prefix}-{img_name}_contour_pred.png"))
-
 
 def main():
     # Load configuration

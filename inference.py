@@ -24,10 +24,10 @@ from typing import List, Dict, Optional
 from src.tadiff_model import Tadiff_model
 from src.net.diffusion import GaussianDiffusion
 from src.data.data_loader import load_data
-from src.visualization.visualizer import save_visualization_results, create_directory
+from src.visualization.visualizer import Visualizer, create_directory
 from src.utils.image_processing import prepare_image_batch, create_noise_tensor
 
-def get_input_files(data_root: str = "./data/lumiere",
+def get_input_files(data_root: str = "./data/sailor",
                    patient_ids: Optional[List[str]] = None,
                    prefix: str = '') -> List[Dict[str, str]]:
     """
@@ -105,8 +105,12 @@ def process_session(
     images = prepare_image_batch(images, n_sessions)
     
     # Create session directory
-    target_session_idx = images.shape[1]//4 #- 1  # Last session is target
-    session_path = os.path.join(save_path, f'p-{patient_id}', f'-ses-{target_session_idx:02d}')
+    target_session_idx = images.shape[1] #- 1  # Last session is target
+    session_path = os.path.join(save_path, f'p-{patient_id}',
+                                f'ses-{target_session_idx:02d}',
+                                f'day-{input_days.item()}', 
+                                f'treatment-{input_treatments.item()}',
+                                )
     create_directory(session_path)
     process_slice(
         slice_idx=slice_idx,
@@ -148,14 +152,16 @@ def process_slice(
         num_samples: Number of predictions to generate
         target_idx: Index of target session for prediction
     """
-    # Prepare data - always use last 4 sessions (including new target)
+    # Prepare data - use last 3 sessions as input
     slice_indices = [slice_idx] * num_samples
-    n_sessions = target_idx #days.shape[1]
+    n_sessions = images.shape[1] // 4  # Number of sessions in input
+    
+    # Get the last 3 sessions for input
     session_indices = np.array([
-        n_sessions - 3,
-        n_sessions - 2,
-        n_sessions - 1,
-        n_sessions -1
+        n_sessions - 3,  # 3rd last session
+        n_sessions - 2,  # 2nd last session
+        n_sessions - 1,      # last session
+        n_sessions      # last session (will be replaced with noise)
     ])
     session_indices[session_indices < 0] = 0
     session_indices = list(session_indices)
@@ -167,16 +173,14 @@ def process_slice(
     # Create noise and prepare target images
     noise = create_noise_tensor(num_samples, 3, images.shape[3], images.shape[4], device)
     x_t = seq_imgs.clone()
-    x_0 = []
     
-    # Set up target indices
-    i_tg = target_idx * torch.ones((len(slice_indices),), dtype=torch.int8).to(device)
+    # Set up target indices - use the last position (index 3) for prediction
+    i_tg = torch.ones((len(slice_indices),), dtype=torch.int8).to(device) * 3
     
-    # Prepare input tensors
-    for i, j in zip(range(num_samples), i_tg):
-        x_0.append(seq_imgs[[i], j, :, :, :])
-        x_t[i, j, :, :, :] = noise[i, :, :, :]
-    x_0 = torch.cat(x_0, dim=0)
+    # Replace the last session with noise
+    for i in range(num_samples):
+        x_t[i, -1, :, :, :] = noise[i, :, :, :]
+    
     x_t = x_t.reshape(num_samples, len(session_indices) * 3, images.shape[3], images.shape[4])
     
     # Prepare condition tensors
@@ -199,6 +203,14 @@ def process_slice(
     # Process predictions
     seg_seq = torch.sigmoid(seg_seq)
     
+    # Calculate average predictions
+    avg_img = torch.mean(pred_img, 0)  # (3, H, W)
+    avg_mask_pred = torch.mean(seg_seq, 0)  # (4, H, W)
+    
+    # Calculate uncertainty maps
+    img_std = torch.std(pred_img, 0)  # (3, H, W)
+    seg_seq_std = torch.std(seg_seq, 0)  # (4, H, W)
+    
     # Save predictions
     np.save(
         os.path.join(session_path, f'prediction-slice-{slice_idx:03d}.npy'),
@@ -209,17 +221,51 @@ def process_slice(
         seg_seq.cpu().numpy()
     )
     
-    # Save visualizations
-    save_visualization_results(
-        session_path=session_path,
-        file_prefix=f'target-sess-{target_idx:02d}-slice-{slice_idx:03d}',
-        images={
-            'prediction': torch.mean(pred_img, 0).cpu().numpy()
-        },
-        masks={
-            'pred_mask': torch.mean(torch.sigmoid(seg_seq), 0).cpu().numpy()
-        }
-    )
+    # Create file prefix
+    file_prefix = f'ses-{target_idx:02d}_slice-{slice_idx:03d}'
+    
+    # Create visualizer with default colors
+    visualizer = Visualizer({
+        0: (0, 0, 0),       # background
+        1: (255, 0, 0),     # red
+        2: (0, 255, 0),     # green  
+        3: (0, 0, 255),     # blue
+        4: (255, 255, 0)    # yellow for ensemble
+    })
+    
+    try:
+        # Save average prediction mask
+        pred_mask_pil = visualizer.to_pil(avg_mask_pred[-1, :, :].cpu().numpy())
+        pred_mask_pil.save(os.path.join(session_path, f"{file_prefix}-pred-mask.png"))
+        
+        # Save uncertainty maps
+        visualizer.plot_uncertainty(img_std[0, :, :].cpu().numpy(), 
+                                  os.path.join(session_path, f"{file_prefix}-uncertainty_t1.png"), 
+                                  overlay=avg_img[0, :, :].cpu().numpy())
+        visualizer.plot_uncertainty(img_std[1, :, :].cpu().numpy(), 
+                                  os.path.join(session_path, f"{file_prefix}-uncertainty_t1c.png"),
+                                  overlay=avg_img[1, :, :].cpu().numpy())
+        visualizer.plot_uncertainty(img_std[2, :, :].cpu().numpy(), 
+                                  os.path.join(session_path, f"{file_prefix}-uncertainty_flair.png"),
+                                  overlay=avg_img[2, :, :].cpu().numpy())
+        
+        visualizer.plot_uncertainty(seg_seq_std[0, :, :].cpu().numpy(), 
+                                  os.path.join(session_path, f"{file_prefix}-uncertainty_mask.png"),
+                                  overlay=avg_img[2, :, :].cpu().numpy())
+        
+        # Save images for each modality
+        modal_names = ['t1', 't1c', 'flair']
+        for j in range(3):
+            pred_img = visualizer.to_pil(avg_img[j].cpu().numpy())
+            pred_img.save(os.path.join(session_path, f"{file_prefix}-pred-{modal_names[j]}.png"))
+            
+            # Save contours
+            pred_contour = visualizer.draw_contour(pred_img, pred_mask_pil)
+            pred_contour.save(os.path.join(session_path, f"{file_prefix}-pred-{modal_names[j]}_contour.png"))
+            
+    except Exception as e:
+        print(f"Error saving visualization results: {e}")
+        raise
 
 def main():
     """Main execution function for TaDiff inference.
@@ -241,40 +287,58 @@ def main():
                         help='Number of predictions to generate')
     parser.add_argument('--output_dir', default='./inference_results',
                         help='Directory to save results')
-    parser.add_argument('--slice_idx', type=int, required=True,
-                        help='Z-index of slice to process')
-    parser.add_argument('--input_day', type=float, required=True,
-                        help='Day value for prediction session')
-    parser.add_argument('--input_treatment', type=float, required=True,
-                        help='Treatment code for prediction session')
+    parser.add_argument('--slice_idx', type=int, default=None,
+                        help='Slice index to process. If not provided, uses middle slice')
+    parser.add_argument('--input_day', type=int, default=10,
+                        help='Days to add to last session day for target prediction')
+    parser.add_argument('--input_treatment', type=int, required=True,
+                        help='Treatment code for target prediction')
     args = parser.parse_args()
     
-    # Setup device and model
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = Tadiff_model.load_from_checkpoint(args.ckpt_path, strict=False)
-    model.eval()
+    # Set device
+    if torch.cuda.is_available():
+        device = "cuda:0"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
+    
+    # Load model
+    model = Tadiff_model.load_from_checkpoint(
+        args.ckpt_path,
+        model_channels=64,
+        num_heads=8,
+        num_res_blocks=2,
+        strict=False
+    )
     model.to(device)
+    model.eval()
     
     # Load data
-    input_files = get_input_files(
-        data_root=args.data_root,
-        patient_ids=args.patient_ids,
-        prefix=args.prefix
-    )
+    input_files = get_input_files(args.data_root, args.patient_ids, args.prefix)
     dataloader = load_data(input_files)
     
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    # Process all data
-    for batch_idx, batch in enumerate(dataloader):
-        print(f"Processing batch {batch_idx}")
+    # Process each patient
+    for i, batch in enumerate(dataloader):
+        patient_id = args.patient_ids[i]
+        print(f'Processing patient {patient_id}')
         
-        # Process with input parameters
-        patient_id = args.patient_ids[batch_idx]
-        input_days = torch.tensor([args.input_day], device=device)
+        # Get last session day and calculate target day
+        last_session_day = batch['days'][0, -1].item()
+        target_day = last_session_day + args.input_day
+        
+        # Create input tensors for target session
+        input_days = torch.tensor([target_day], device=device)
         input_treatments = torch.tensor([args.input_treatment], device=device)
         
+        # If slice_idx not provided, use middle slice
+        if args.slice_idx is None:
+            slice_idx = batch['image'].shape[-1] // 2
+            print(f'Using middle slice: {slice_idx}')
+        else:
+            slice_idx = args.slice_idx
+        
+        # Process session
         process_session(
             patient_id=patient_id,
             batch=batch,
@@ -283,7 +347,7 @@ def main():
             save_path=args.output_dir,
             input_days=input_days,
             input_treatments=input_treatments,
-            slice_idx=args.slice_idx,
+            slice_idx=slice_idx,
             diffusion_steps=args.diffusion_steps,
             num_samples=args.num_samples
         )
