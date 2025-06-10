@@ -4,9 +4,9 @@
 
 This repository implements TaDiff-Net, a treatment-aware diffusion probabilistic model for longitudinal MRI generation and diffuse glioma growth prediction. The model generates future predictions of tumor masks and multi-parametric MRI images for different treatment plans.
 
-<div align="center">
-    <img src="demo_1.gif" alt="TaDiff-Net Demo" width="400">
-    <img src="tadiff_concept.png" alt="TaDiff-Net Concept" width="650">
+<div style="display: flex; align-items: unsafe center;">
+    <img src="demo_1.gif" alt="Demo GIF" style="height: 260px;">
+    <img src="tadiff_concept.png" alt="Concept Image" style="width: 650px;">
 </div>
 
 ## 📚 Overview
