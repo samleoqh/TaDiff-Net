@@ -1,39 +1,50 @@
 # TaDiff-Net
-This repository contains code for the paper "[Treatment-aware Diffusion Probabilistic Model for Longitudinal MRI Generation and Diffuse Glioma Growth Prediction](https://doi.org/10.1109/TMI.2025.3533038)".
 
-<div style="display: flex; align-items: unsafe center;">
-    <img src="demo_1.gif" alt="Demo GIF" style="height: 260px;">
-    <img src="tadiff_concept.png" alt="Concept Image" style="width: 650px;">
+[![Paper](https://img.shields.io/badge/Paper-IEEE_TMI-blue)](https://doi.org/10.1109/TMI.2025.3533038)
+
+This repository implements TaDiff-Net, a treatment-aware diffusion probabilistic model for longitudinal MRI generation and diffuse glioma growth prediction. The model generates future predictions of tumor masks and multi-parametric MRI images for different treatment plans.
+
+<div align="center">
+    <img src="demo_1.gif" alt="TaDiff-Net Demo" width="400">
+    <img src="tadiff_concept.png" alt="TaDiff-Net Concept" width="650">
 </div>
 
-## Overview
-We propose a novel end-to-end network capable of future predictions of tumor masks and multi-parametric magnetic resonance images (MRI) of how the tumor will look at any future time points for different treatment plans. Our approach is based on cutting-edge diffusion probabilistic models and deep-segmentation neural networks. We included sequential multi-parametric MRI and treatment information as conditioning inputs to guide the generative diffusion process as well as a joint segmentation process. This allows for tumor growth estimates and realistic MRI generation at any given treatment and time point. We trained the model using real-world [postoperative longitudinal MRI data](https://search.kg.ebrains.eu/instances/cae85bcb-8526-442d-b0d8-a866425efff8) with glioma tumor growth trajectories represented as tumor segmentation maps over time. The model demonstrates promising performance across various tasks, including generating high-quality multi-parametric MRI with tumor masks, performing time-series tumor segmentations, and providing uncertainty estimates. Combined with the treatment-aware generated MRI, the tumor growth predictions with uncertainty estimates can provide useful information for clinical decision-making.
+## 📚 Overview
 
-## Project Structure
+TaDiff-Net is a novel end-to-end network that:
+- Generates future predictions of tumor masks and multi-parametric MRI images
+- Supports different treatment plans
+- Uses diffusion probabilistic models and deep-segmentation neural networks
+- Incorporates sequential multi-parametric MRI and treatment information
+- Provides uncertainty estimates for clinical decision-making
+
+The model was trained on real-world postoperative longitudinal MRI data from glioma patients.
+
+## 📁 Project Structure
 
 ```
 TaDiff-Net/
-├── config/
-│   └── test_config.py      # Configuration settings
-├── src/
-│   ├── data/
-│   │   └── data_loader.py  # Data loading and preprocessing
-│   ├── evaluation/
-│   │   ├── metrics.py      # Evaluation metrics
-│   │   └── ssim.py         # SSIM implementation
-│   ├── net/
-│   │   └── diffusion.py    # Diffusion model implementation
-│   ├── visualization/
-│   │   └── visualizer.py   # Visualization utilities
-│   └── tadiff_model.py     # Main model implementation
-├── ckpt/                   # Model checkpoints
-├── data/                   # Data directory
-├── test.py                 # Testing script
-├── inference.py               # Inference script
-└── README.md              # This file
+├── config/                 # Configuration files
+│   └── test_config.py      # Model and test settings
+├── src/                   # Source code
+│   ├── data/              # Data handling
+│   │   └── data_loader.py # Data loading and preprocessing
+│   ├── evaluation/        # Evaluation metrics
+│   │   ├── metrics.py     # Evaluation metrics
+│   │   └── ssim.py        # SSIM implementation
+│   ├── net/               # Model implementations
+│   │   └── diffusion.py   # Diffusion model
+│   ├── visualization/     # Visualization tools
+│   │   └── visualizer.py  # Visualization utilities
+│   └── tadiff_model.py    # Main model implementation
+├── ckpt/                  # Model checkpoints
+├── data/                  # Data directory
+├── test.py                # Testing script
+├── inference.py           # Inference script
+└── README.md              # Documentation
 ```
 
-## Setup
+## 🛠️ Setup
 
 1. Clone the repository:
 ```bash
@@ -51,22 +62,13 @@ pip install -r requirements.txt
    - Data should be organized as follows:
      ```
      data/
-     ├── {patient_id}_image.npy    # Image data
+     ├── {patient_id}_image.npy    # Image data (T1, T1c, FLAIR)
      ├── {patient_id}_label.npy    # Ground truth labels (for testing)
      ├── {patient_id}_days.npy     # Time points
      └── {patient_id}_treatment.npy # Treatment information
      ```
 
-## Configuration
-
-The configuration settings are defined in `config/test_config.py`. Key parameters include:
-
-- Model parameters (channels, heads, etc.)
-- Test/inference parameters (diffusion steps, number of samples)
-- Data paths and patient IDs
-- Visualization settings
-
-## Usage
+## 🚀 Usage
 
 ### Testing
 
@@ -101,41 +103,7 @@ This will:
 2. Generate predictions for target patient and slice
 3. Save ensemble predictions and plot uncertainty maps
 
-Test Output structure:
-```
-test_results/
-├── p-{patient_id}/
-│   ├── slice-000/
-│   │   ├── pred_{t1,t1c,flair}.png    # Average predictions (generated 3 modal MRI slices)
-│   │   ├── pred_mask.png            # predicted target tumor segmentation mask
-│   │   ├── uncertainty_{t1,t1c,flair}.png # predictied 3 modal image uncertainty
-│   │   ├── uncertainty_mask.png     # target tumor mask uncertainty
-│   └── slice-001/
-│       └── ...
-├── test_scores.csv
-```
-
-Inference Output structure:
-```
-inference_results/
-├── p-{}/ses-{}/day-{}/treatment-{0/1}/
-│   ├── ses-{}-slice-{}_pred_{t1,t1c,flair}.png    # Average predictions (generated 3 modal MRI slices)
-│   ├── ses-{}-slice-{}_pred_mask.png              # predicted target tumor segmentation mask
-│   ├── ses-{}-slice-{}_uncertainty_{t1,t1c,flair}.png # predictied 3 modal image uncertainty
-│   ├── ses-{}-slice-{}_uncertainty_mask.png       # target tumor mask uncertainty
-│   └── ...
-```
-
-## Model Details
-
-TaDiff-Net uses a diffusion-based approach for tumor growth prediction and segmentation. Key features:
-
-- Multi-modal input (T1, T1c, FLAIR)
-- Temporal modeling of tumor growth
-- Treatment-aware predictions
-- Uncertainty estimation through multiple samples
-
-## Evaluation Metrics
+## 📊 Evaluation Metrics
 
 The model is evaluated using:
 - Dice coefficient (at multiple thresholds)
@@ -144,7 +112,7 @@ The model is evaluated using:
 - Structural Similarity Index (SSIM)
 - Relative Absolute Volume Difference (RAVD)
 
-## Visualization
+## 🎨 Visualization
 
 The visualization module provides:
 - Prediction overlays
@@ -152,10 +120,10 @@ The visualization module provides:
 - Contour visualization
 - Multi-modal image display
 
+## 📖 Citation
 
-## Citation
+If you find this code helpful in your work, please cite:
 
-If you find this code helps in your work, please cite:
 ```
 @ARTICLE{10851394,
   author={Liu, Qinghui and Fuster-Garcia, Elies and Thokle Hovden, Ivar and MacIntosh, Bradley J. and Grødem, Edvard O. S. and Brandal, Petter and Lopez-Mateu, Carles and Sederevičius, Donatas and Skogen, Karoline and Schellhorn, Till and Bjørnerud, Atle and Eeg Emblem, Kyrre},
