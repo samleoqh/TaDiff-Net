@@ -48,7 +48,7 @@ TaDiff-Net/
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/TaDiff-Net.git
+git clone https://github.com/samleoqh/TaDiff-Net.git
 cd TaDiff-Net
 ```
 
@@ -75,7 +75,7 @@ pip install -r requirements.txt
 To evaluate the model with ground truth data:
 
 ```bash
-python test.py
+python test.py --patient_ids 17 --diffusion_steps 500 --num_samples 5
 ```
 
 This will:
@@ -95,7 +95,7 @@ Output will be saved in the configured save path with:
 To generate predictions without ground truth:
 
 ```bash
-python inference.py --input_day 20 --input_treatment 1
+python inference.py --patient_ids 17 --diffusion_steps 50 --input_day 20 --input_treatment 1
 ```
 
 This will:
