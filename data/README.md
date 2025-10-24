@@ -50,7 +50,7 @@ Where:
 
 ### Requirements
 ```bash
-pip install numpy pandas nibabel torch monai reorient_nii
+pip install numpy pandas nibabel torch reorient_nii
 ```
 
 
@@ -69,7 +69,7 @@ pip install numpy pandas nibabel torch monai reorient_nii
    ```
 
 3. **Output location**:
-   By default, processed data is saved to `/sailor`
+   By default, processed data is saved to `./sailor`
 
 ### Advanced Usage
 
@@ -79,14 +79,14 @@ from preproc_prepare_data import save_session_data, get_file_dict
 # Process specific patients
 custom_patients = ['sub-01', 'sub-02', 'sub-03']
 file_dict = get_file_dict(patient_ids=custom_patients)
-save_session_data(file_dict, save_path='custom_output/')
+save_session_data(file_dict, save_path='./custom_output')
 
 # Load preprocessed data
 import numpy as np
-images = np.load('data/sailor_npy/sub-01_image.npy')
-labels = np.load('data/sailor_npy/sub-01_label.npy')
-days = np.load('data/sailor_npy/sub-01_days.npy')
-treatment = np.load('data/sailor_npy/sub-01_treatment.npy')
+images = np.load('data/sailor/sub-01_image.npy')
+labels = np.load('data/sailor/sub-01_label.npy')
+days = np.load('data/sailor/sub-01_days.npy')
+treatment = np.load('data/sailor/sub-01_treatment.npy')
 ```
 
 ## Data Specifications
@@ -118,8 +118,6 @@ treatment = np.load('data/sailor_npy/sub-01_treatment.npy')
 ### Statistics
 - **Total patients**: 27 (sub-01 to sub-27)
 - **Valid patients**: 25 (after QC) sicne some sessions with co-registration issues or missing modalities or missing all CL masks
-- **Training/val set**: 18 patients
-- **Test set**: 5 patients (sub-14, sub-16, sub-17, sub-26)
 
 
 ## Preprocessing Pipeline
@@ -152,7 +150,7 @@ def nonzero_norm_image(image, clip_percent=0.1):
 ├── preproc_prepare_data.py    # Main preprocessing script
 ├── README.md                  # This file
 └── data/
-    └── sailor_npy/            # Output directory
+    └── sailor/            # Output directory
         ├── sub-01_image.npy
         ├── sub-01_label.npy
         ├── sub-01_days.npy
@@ -163,9 +161,8 @@ def nonzero_norm_image(image, clip_percent=0.1):
 
 Required CSV format:
 ```csv
-patients,interval_days,overall_survival_months,age_years
-sub-01,"[0,30,60,90,120,150]",24.5,58
-sub-02,"[0,28,56,84,112]",18.3,62
+patients	age	survival_months	num_ses	interval_days
+sub-01	64.25479452	33.50819672	6	[13, 15, 14, 34, 28]
 ...
 ```
 
@@ -182,17 +179,6 @@ sub-02,"[0,28,56,84,112]",18.3,62
 ### Issue: Missing files
 **Cause**: Incomplete dataset  
 **Solution**: Ensure all required files exist in `KEY_FILENAMES`
-
-## Performance Tips
-
-1. **Parallel Processing**: The script supports multiprocessing
-   ```python
-   torch.multiprocessing.set_sharing_strategy('file_system')
-   ```
-
-2. **Memory Management**: Process patients sequentially to avoid OOM
-
-3. **Disk I/O**: Use SSD for faster file reading (especially for large datasets)
 
 ## Output Validation
 
