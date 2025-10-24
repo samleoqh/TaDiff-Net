@@ -26,7 +26,7 @@ from reorient_nii import reorient
 torch.multiprocessing.set_sharing_strategy('file_system')
 
 # Sailor Dataset root path
-sailor_raw_path = '/Users/brianliu/myprojects/datasets/sailor_raw'
+sailor_raw_path = '/path_to_your/datasets/sailor_raw'
 
 # MRI modality indices
 # T1, T1C, FLAIR, T2 = 0, 1, 2, 3
