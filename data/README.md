@@ -1,10 +1,10 @@
 # SAILOR Dataset Preprocessing
 
-This repository contains preprocessing scripts for the SAILOR (brain tumor MRI) longitudinal dataset. The script processes multi-modal MRI scans and segmentation masks, preparing them for deep learning models.
+This repository contains preprocessing scripts for the SAILOR (brain tumor MRI) longitudinal dataset. The script processes multi-modal MRI scans and segmentation masks, preparing them for TaDiff-Net models. [SAILOR raw data download link](https://search.kg.ebrains.eu/instances/cae85bcb-8526-442d-b0d8-a866425efff8)
 
 ## Dataset Structure
 
-The SAILOR dataset follows this structure:
+The SAILOR dataset follows this structure:ß
 
 ```
 sailor-raw/
